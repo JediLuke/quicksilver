@@ -5,9 +5,18 @@ defmodule Quicksilver.Agents.SampleAgent do
   use GenServer
   require Logger
 
-  defstruct [:name, :conversation_history, :loop_interval]
+  defstruct [:name, :conversation_history, :loop_interval, :questions_asked]
 
-
+  @trivia_questions [
+    "What is the capital of France?",
+    "Who wrote Romeo and Juliet?",
+    "What is the largest planet in our solar system?",
+    "What year did World War II end?",
+    "What is the speed of light in meters per second?",
+    "Who painted the Mona Lisa?",
+    "What is the chemical symbol for gold?",
+    "How many continents are there on Earth?"
+  ]
 
   def start_link(config) do
     GenServer.start_link(__MODULE__, config, name: via_tuple(config[:name]))
@@ -20,94 +29,121 @@ defmodule Quicksilver.Agents.SampleAgent do
     state = %__MODULE__{
       name: config[:name],
       conversation_history: [],
-      loop_interval: config[:loop_interval] || 5_000
+      loop_interval: config[:loop_interval] || 10_000,
+      questions_asked: 0
     }
 
     Logger.info("🤖 Agent '#{state.name}' starting up...")
 
-    # Kick off the first interaction
-    send(self(), :think)
+    # Kick off the first interaction after a brief delay
+    Process.send_after(self(), :think, 2_000)
 
     {:ok, state}
   end
 
   @impl true
   def handle_info(:think, state) do
-    Logger.info("💭 Agent '#{state.name}' thinking...")
+    # Pick a random trivia question
+    question = Enum.random(@trivia_questions)
+
+    Logger.info("💭 Agent '#{state.name}' pondering: #{question}")
 
     # Build messages for the LLM
-    # messages = build_messages(state)
+    messages = [
+      %{
+        role: "system",
+        content: "You are #{state.name}, a knowledgeable AI assistant. Answer questions concisely and accurately."
+      },
+      %{
+        role: "user",
+        content: question
+      }
+    ]
 
     # Call the LLM backend
-    # case Quicksilver.Backends.Backend.complete(state.backend_pid, messages) do
-    #   {:ok, response} ->
-    #     Logger.info("🧠 Agent '#{state.name}' says: #{response}")
+    case Quicksilver.Backends.LlamaCpp.complete(LlamaCpp, messages) do
+      {:ok, response} ->
+        # Clean up the response
+        answer = String.trim(response)
 
-    #     # Update conversation history
-    #     new_history = state.conversation_history ++ [
-    #       %{role: "assistant", content: response}
-    #     ]
+        Logger.info("🧠 Agent '#{state.name}' answers: #{answer}")
 
-    #     # Schedule next thought
-    #     Process.send_after(self(), :think, state.loop_interval)
+        new_state = %{state | questions_asked: state.questions_asked + 1}
 
-    #     {:noreply, %{state | conversation_history: new_history}}
+        # Schedule next thought
+        Process.send_after(self(), :think, new_state.loop_interval)
 
-    #   {:error, reason} ->
-    #     Logger.error("❌ Agent '#{state.name}' failed to get response: #{inspect(reason)}")
+        {:noreply, new_state}
 
-    #     # Retry after interval
-    #
+      {:error, :not_ready} ->
+        Logger.warning("⏸️  Agent '#{state.name}': Backend not ready yet, retrying in 5s...")
+        Process.send_after(self(), :think, 5_000)
+        {:noreply, state}
 
-    #     {:noreply, state}
-    # end
+      {:error, reason} ->
+        Logger.error("❌ Agent '#{state.name}' failed to get response: #{inspect(reason)}")
 
-    Process.send_after(self(), :think, state.loop_interval)
+        # Retry after interval with exponential backoff (max 30s)
+        retry_delay = min(state.loop_interval * 2, 30_000)
+        Logger.info("🔄 Retrying in #{div(retry_delay, 1000)}s...")
+
+        Process.send_after(self(), :think, retry_delay)
+        {:noreply, state}
+    end
+  end
+
+  @doc """
+  Ask the agent a specific question (interrupts the trivia loop)
+  """
+  def ask(agent_name, question) do
+    GenServer.cast(via_tuple(agent_name), {:ask, question})
+  end
+
+  @doc """
+  Get agent stats
+  """
+  def stats(agent_name) do
+    GenServer.call(via_tuple(agent_name), :stats)
+  end
+
+  @impl true
+  def handle_cast({:ask, question}, state) do
+    Logger.info("📨 Agent '#{state.name}' received question: #{question}")
+
+    # Build messages for the LLM
+    messages = [
+      %{
+        role: "system",
+        content: "You are #{state.name}, a knowledgeable AI assistant. Answer questions concisely and accurately."
+      },
+      %{
+        role: "user",
+        content: question
+      }
+    ]
+
+    # Answer immediately
+    case Quicksilver.Backends.LlamaCpp.complete(LlamaCpp, messages) do
+      {:ok, response} ->
+        answer = String.trim(response)
+        Logger.info("🧠 Agent '#{state.name}' responds: #{answer}")
+
+      {:error, reason} ->
+        Logger.error("❌ Agent '#{state.name}' failed to answer: #{inspect(reason)}")
+    end
 
     {:noreply, state}
   end
 
-  @doc """
-  Send a message to the agent
-  """
-  def send_message(agent_name, content) do
-    GenServer.call(via_tuple(agent_name), {:add_message, content})
-  end
-
   @impl true
-  def handle_call({:add_message, content}, _from, state) do
-    new_history = state.conversation_history ++ [
-      %{role: "user", content: content}
-    ]
-
-    Logger.info("📨 Agent '#{state.name}' received message: #{content}")
-
-    # Trigger immediate thinking (for now)
-    send(self(), :think)
-
-    {:reply, :ok, %{state | conversation_history: new_history}}
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      name: state.name,
+      questions_asked: state.questions_asked,
+      loop_interval: state.loop_interval
+    }
+    {:reply, stats, state}
   end
-
-  # defp build_messages(state) do
-  #   system_message = %{
-  #     role: "system",
-  #     content: """
-  #     You are #{state.name}, a helpful AI assistant built with Quicksilver.
-  #     Keep your responses concise and helpful.
-  #     This is a proof of concept - just demonstrate that you're alive and thinking!
-  #     """
-  #   }
-
-  #   # If no conversation history, start with a greeting prompt
-  #   if state.conversation_history == [] do
-  #     [
-  #       system_message,
-  #       %{role: "user", content: "Hello! Please introduce yourself briefly."}
-  #     ]
-  #   else
-  #     [system_message | state.conversation_history]
-  #   end
-  # end
 
   defp via_tuple(name) do
     {:via, Registry, {Quicksilver.AgentRegistry, name}}
