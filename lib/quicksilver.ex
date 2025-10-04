@@ -21,16 +21,6 @@ defmodule Quicksilver do
   """
 
   @doc """
-  Start a LlamaCpp backend with default config
-  """
-  def start_backend do
-    config = Application.get_env(:quicksilver, :llama_cpp)
-    Quicksilver.Backends.LlamaCpp.start_link(config)
-  end
-
-
-
-  @doc """
   Start an agent
   """
   def start_agent(agent_module, opts \\ []) do

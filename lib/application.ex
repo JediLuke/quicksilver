@@ -4,11 +4,8 @@ defmodule Quicksilver.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Core infrastructure
-      # {Registry, keys: :unique, name: Quicksilver.Registry},
       {Registry, keys: :unique, name: Quicksilver.AgentRegistry},
-
-      # Agent manager (MVP!)
+      Quicksilver.Backends.LlamaCpp,
       Quicksilver.Agents.Manager
     ]
 

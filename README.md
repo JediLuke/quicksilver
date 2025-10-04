@@ -15,8 +15,7 @@ Whether you're creating an autonomous research assistant, a conversational sidek
 ### Talk to backend directly via Llama.cpp
 
 ```
-{:ok, backend_pid} = Quicksilver.start_backend()
-{:ok, response} = Quicksilver.Backends.LlamaCpp.complete(backend_pid, [%{role: "user", content: "Hello!"}])
+{:ok, response} = Quicksilver.Backends.LlamaCpp.complete(LlamaCpp, [%{role: "user", content: "Hello!"}])
 
 IO.puts(response)
 ```
