@@ -32,7 +32,7 @@ defmodule Quicksilver do
   """
   def start_sample_agent do
     start_agent(Quicksilver.Agents.SampleAgent,
-      name: "Sample Agent"
+      name: "Alex Trebek"
     )
   end
 

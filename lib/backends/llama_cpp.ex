@@ -93,7 +93,8 @@ defmodule Quicksilver.Backends.LlamaCpp do
           "--port", to_string(config.port),
           "--threads", to_string(config.threads || 16),
           "--ctx-size", to_string(config.ctx_size || 8192),
-          "--n-gpu-layers", to_string(config.gpu_layers || 99)
+          "--n-gpu-layers", to_string(config.gpu_layers || 99),
+          "--log-disable"  # Suppress llama.cpp logs
         ]
 
         # Add chat template if specified
@@ -112,7 +113,7 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
         # Spawn detached - not linked to any process
         spawn(fn ->
-          System.cmd(config.server_path, args, into: IO.stream(:stdio, :line))
+          System.cmd(config.server_path, args)
         end)
 
         Logger.info("✅ Server starting... wait a moment for model to load")
@@ -357,7 +358,8 @@ defmodule Quicksilver.Backends.LlamaCpp do
       "--port", to_string(config.port),
       "--threads", to_string(config.threads || 16),
       "--ctx-size", to_string(config.ctx_size || 8192),
-      "--n-gpu-layers", to_string(config.gpu_layers || 99)
+      "--n-gpu-layers", to_string(config.gpu_layers || 99),
+      "--log-disable"  # Suppress llama.cpp logs
     ]
 
     # Add chat template if specified

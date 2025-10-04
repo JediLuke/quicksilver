@@ -66,7 +66,10 @@ defmodule Quicksilver.Agents.SampleAgent do
         # Clean up the response
         answer = String.trim(response)
 
-        Logger.info("🧠 Agent '#{state.name}' answers: #{answer}")
+        Logger.info("""
+        ❓ Question: #{question}
+        🧠 Agent '#{state.name}' answers: #{answer}
+        """)
 
         new_state = %{state | questions_asked: state.questions_asked + 1}
 
