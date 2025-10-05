@@ -178,11 +178,26 @@ defmodule Quicksilver.Backends.LlamaCpp do
   end
 
   @impl GenServer
-  def terminate(_reason, state) do
+  def terminate(reason, state) do
     # Clean up owned server on shutdown
     if state.owned_server && state.server_port do
       Logger.info("🛑 Shutting down llama.cpp server...")
-      Port.close(state.server_port)
+      try do
+        Port.close(state.server_port)
+      catch
+        :error, :badarg ->
+          Logger.warning("""
+          ⚠️  Port close failed - port was already closed.
+          This can happen if the llama.cpp server exited before we called terminate/2.
+          Details:
+            - Terminate reason: #{inspect(reason)}
+            - Port: #{inspect(state.server_port)}
+            - Owned server: #{state.owned_server}
+            - Backend ready: #{state.ready}
+          This is usually harmless - the server cleaned up itself.
+          """)
+          :ok
+      end
     end
     :ok
   end
@@ -196,6 +211,28 @@ defmodule Quicksilver.Backends.LlamaCpp do
         Logger.error("Failed to initialize LlamaCpp: #{inspect(reason)}")
         {:stop, {:initialization_failed, reason}, state}
     end
+  end
+
+  @impl GenServer
+  def handle_info({port, {:exit_status, status}}, %{server_port: port} = state) when is_port(port) do
+    Logger.warning("llama.cpp server exited with status #{status}")
+    # Mark as not ready since server is gone
+    {:noreply, %{state | ready: false, server_port: nil}}
+  end
+
+  @impl GenServer
+  def handle_info(msg, state) do
+    Logger.warning("""
+    ⚠️  Received unexpected message in LlamaCpp backend.
+    Message: #{inspect(msg)}
+    State:
+      - Ready: #{state.ready}
+      - Owned server: #{state.owned_server}
+      - Port: #{inspect(state.server_port)}
+      - Base URL: #{state.base_url}
+    This message was ignored.
+    """)
+    {:noreply, state}
   end
 
   @impl GenServer
