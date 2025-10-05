@@ -43,5 +43,12 @@ defmodule Quicksilver do
     Quicksilver.Agents.Manager.list_agents()
   end
 
+  @doc """
+  Start the terminal chat interface
+  """
+  def chat do
+    Quicksilver.Interfaces.Terminal.start()
+  end
+
   def version, do: "0.1.0"
 end
