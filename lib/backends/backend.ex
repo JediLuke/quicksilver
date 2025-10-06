@@ -1,6 +1,6 @@
 defmodule Quicksilver.Backends.Backend do
   @moduledoc """
-  Behaviour for LLM backends
+  Behaviour for LLM backends.
   """
 
   @type config :: map()
