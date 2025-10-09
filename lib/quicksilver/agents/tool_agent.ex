@@ -12,8 +12,8 @@ defmodule Quicksilver.Agents.ToolAgent do
 
   alias Quicksilver.Tools.{Registry, Formatter}
 
-  @default_max_iterations 10
-  @default_timeout 120_000
+  @default_max_iterations 50
+  @default_timeout 300_000  # 5 minutes for complex multi-tool tasks
 
   ## Client API
 
@@ -30,14 +30,14 @@ defmodule Quicksilver.Agents.ToolAgent do
 
   Options:
   - :max_iterations - Maximum number of LLM calls (default: #{@default_max_iterations})
-  - :timeout - Timeout in milliseconds (default: #{@default_timeout})
+  - :per_iteration_timeout - Timeout per LLM call in milliseconds (default: #{@default_timeout})
   - :workspace_root - Base directory for file operations
   """
   @spec execute_task(GenServer.server(), String.t(), keyword()) ::
           {:ok, String.t()} | {:error, String.t()}
   def execute_task(server \\ __MODULE__, task, opts \\ []) do
-    timeout = Keyword.get(opts, :timeout, @default_timeout)
-    GenServer.call(server, {:execute_task, task, opts}, timeout)
+    # This overall timeout kicks in even if we're still haven't hit max iterations yet
+    GenServer.call(server, {:execute_task, task, opts}, :timer.minutes(10))
   end
 
   @doc """
@@ -83,6 +83,7 @@ defmodule Quicksilver.Agents.ToolAgent do
   def handle_call({:execute_task, task, opts}, _from, state) do
     max_iterations = Keyword.get(opts, :max_iterations, state.max_iterations)
     workspace_root = Keyword.get(opts, :workspace_root, state.workspace_root)
+    per_iteration_timeout = Keyword.get(opts, :per_iteration_timeout, @default_timeout)
 
     context = %{workspace_root: workspace_root}
 
@@ -91,7 +92,7 @@ defmodule Quicksilver.Agents.ToolAgent do
 
     Logger.info("Executing task: #{String.slice(task, 0..100)}...")
 
-    result = execute_with_tools(initial_history, context, max_iterations, state)
+    result = execute_with_tools(initial_history, context, max_iterations, state, per_iteration_timeout)
 
     # Update conversation history in state
     new_state = %{state | conversation_history: elem(result, 1)}
@@ -117,7 +118,10 @@ defmodule Quicksilver.Agents.ToolAgent do
 
   ## Private Functions
 
-  defp execute_with_tools(history, context, iterations_left, state, iteration \\ 1) do
+  defp execute_with_tools(history, context, iterations_left, state, per_iteration_timeout, iteration \\ 1) do
+    # Add approval policy to context
+    context = context |> Map.put_new(:approval_policy, Quicksilver.Approval.Policy.default())
+
     if iterations_left <= 0 do
       error_msg = "Maximum iterations reached without final answer"
       Logger.warning(error_msg)
@@ -134,14 +138,19 @@ defmodule Quicksilver.Agents.ToolAgent do
       # Call LLM (convert string prompt to message format)
       messages = [%{role: "user", content: prompt}]
 
-      case state.backend_module.complete(state.backend_pid, messages, []) do
-        {:ok, response} ->
+      # Spawn a task with timeout for this single iteration
+      task = Task.async(fn ->
+        state.backend_module.complete(state.backend_pid, messages, [])
+      end)
+
+      case Task.yield(task, per_iteration_timeout) || Task.shutdown(task) do
+        {:ok, {:ok, response}} ->
           Logger.debug("LLM response: #{String.slice(response, 0..200)}...")
 
           # Parse response
           case Formatter.parse_tool_call(response) do
             {:tool_call, tool_name, args} ->
-              handle_tool_call(tool_name, args, history, context, iterations_left, state, iteration)
+              handle_tool_call(tool_name, args, history, context, iterations_left, state, per_iteration_timeout, iteration)
 
             {:text_response, text} ->
               # Final answer
@@ -154,14 +163,18 @@ defmodule Quicksilver.Agents.ToolAgent do
               {{:error, "Failed to parse response: #{reason}"}, history}
           end
 
-        {:error, reason} ->
+        {:ok, {:error, reason}} ->
           Logger.error("Backend error: #{reason}")
           {{:error, "Backend error: #{reason}"}, history}
+
+        nil ->
+          Logger.error("LLM call timed out after #{per_iteration_timeout}ms")
+          {{:error, "LLM call timed out"}, history}
       end
     end
   end
 
-  defp handle_tool_call(tool_name, args, history, context, iterations_left, state, iteration) do
+  defp handle_tool_call(tool_name, args, history, context, iterations_left, state, per_iteration_timeout, iteration) do
     Logger.info("Tool call: #{tool_name} with args: #{inspect(args)}")
 
     # Add assistant's tool call to history
@@ -178,7 +191,7 @@ defmodule Quicksilver.Agents.ToolAgent do
         history = history ++ [%{role: "tool", content: formatted_result}]
 
         # Continue loop
-        execute_with_tools(history, context, iterations_left - 1, state, iteration + 1)
+        execute_with_tools(history, context, iterations_left - 1, state, per_iteration_timeout, iteration + 1)
 
       {:error, reason} ->
         Logger.warning("Tool failed: #{reason}")
@@ -188,7 +201,7 @@ defmodule Quicksilver.Agents.ToolAgent do
         history = history ++ [%{role: "tool", content: formatted_error}]
 
         # Continue loop - LLM might try different approach
-        execute_with_tools(history, context, iterations_left - 1, state, iteration + 1)
+        execute_with_tools(history, context, iterations_left - 1, state, per_iteration_timeout, iteration + 1)
     end
   end
 

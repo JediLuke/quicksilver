@@ -6,7 +6,15 @@ defmodule Quicksilver.Tools do
   managing the tools registry.
   """
 
-  alias Quicksilver.Tools.{Registry, FileReader, SearchFiles}
+  alias Quicksilver.Tools.{
+    Registry,
+    FileReader,
+    SearchFiles,
+    ListFiles,
+    EditFile,
+    CreateFile,
+    RunTests
+  }
 
   @doc """
   Register all default tools with the registry.
@@ -16,7 +24,19 @@ defmodule Quicksilver.Tools do
   """
   @spec register_default_tools() :: :ok
   def register_default_tools do
-    tools = [FileReader, SearchFiles]
+    tools = [
+      # Read-only tools
+      FileReader,
+      SearchFiles,
+      ListFiles,
+
+      # Write tools (require approval)
+      EditFile,
+      CreateFile,
+
+      # Utility tools
+      RunTests
+    ]
 
     Enum.each(tools, fn tool ->
       case Registry.register(tool) do
