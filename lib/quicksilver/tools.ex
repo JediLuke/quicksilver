@@ -13,7 +13,8 @@ defmodule Quicksilver.Tools do
     ListFiles,
     EditFile,
     CreateFile,
-    RunTests
+    RunTests,
+    GetRepositoryContext
   }
 
   @doc """
@@ -29,6 +30,7 @@ defmodule Quicksilver.Tools do
       FileReader,
       SearchFiles,
       ListFiles,
+      GetRepositoryContext,
 
       # Write tools (require approval)
       EditFile,

@@ -21,7 +21,10 @@ defmodule Quicksilver.MixProject do
   defp deps do
     [
       {:req, "~> 0.4"},
-      # {:jason, "~> 1.4"},
+      {:jason, "~> 1.4"},
+      {:libgraph, "~> 0.16"},           # Graph operations for call graph
+      {:file_system, "~> 1.0"},         # File watching for cache invalidation
+      {:flow, "~> 1.2"},                # Parallel processing for parsing
       # {:typed_struct, "~> 0.3"},
       # {:uuid, "~> 1.1"},
       # {:rambo, "~> 0.3"}  # For future Claude Code integration

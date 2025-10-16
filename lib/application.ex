@@ -7,6 +7,7 @@ defmodule Quicksilver.Application do
       {Registry, keys: :unique, name: Quicksilver.AgentRegistry},
       Quicksilver.Backends.LlamaCpp,
       Quicksilver.Tools.Registry,
+      Quicksilver.RepositoryMap.Cache.Server,
       {Quicksilver.Agents.ToolAgent,
        backend_module: Quicksilver.Backends.LlamaCpp,
        backend_pid: LlamaCpp,
