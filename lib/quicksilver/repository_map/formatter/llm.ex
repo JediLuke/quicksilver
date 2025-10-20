@@ -3,8 +3,7 @@ defmodule Quicksilver.RepositoryMap.Formatter.LLM do
   Formats repository map for LLM consumption.
   Creates a token-efficient representation of the codebase.
   """
-  alias Quicksilver.RepositoryMap.Parser.Entity
-
+  
   @default_token_limit 4000
 
   @doc """
