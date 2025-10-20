@@ -50,5 +50,4 @@ defmodule Quicksilver do
     Quicksilver.Interfaces.Terminal.start()
   end
 
-  def version, do: "0.1.0"
 end
