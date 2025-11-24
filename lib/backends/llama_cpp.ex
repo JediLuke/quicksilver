@@ -61,6 +61,14 @@ defmodule Quicksilver.Backends.LlamaCpp do
   end
 
   @doc """
+  Manually initialize the backend (connect to existing server or start a new one).
+  Useful when auto_start is disabled in config.
+  """
+  def initialize do
+    GenServer.call(LlamaCpp, :initialize, 120_000)
+  end
+
+  @doc """
   Start a standalone llama.cpp server (detached from Quicksilver).
   Perfect for development - start once, restart Quicksilver many times.
 
@@ -82,19 +90,28 @@ defmodule Quicksilver.Backends.LlamaCpp do
     model_path = config.model_path <> "/" <> config.model_file
 
     unless File.exists?(config.server_path) do
-      {:error, "llama.cpp server not found at #{config.server_path}"}
+      error_msg = "❌ llama.cpp server not found at #{config.server_path}"
+      Logger.error(error_msg)
+      {:error, error_msg}
     else
       unless File.exists?(model_path) do
-        {:error, "Model not found at #{model_path}"}
+        error_msg = "❌ Model not found at #{model_path}"
+        Logger.error(error_msg)
+        {:error, error_msg}
       else
+        # Check if port is already in use
+        if check_port_open(config.port) do
+          Logger.warning("⚠️  Port #{config.port} is already in use. Connecting to existing server...")
+          {:ok, :already_running}
+        else
+
         args = [
           "--model", model_path,
           "--host", "127.0.0.1",
           "--port", to_string(config.port),
           "--threads", to_string(config.threads || 16),
           "--ctx-size", to_string(config.ctx_size || 8192),
-          "--n-gpu-layers", to_string(config.gpu_layers || 99),
-          "--log-disable"  # Suppress llama.cpp logs
+          "--n-gpu-layers", to_string(config.gpu_layers || 99)
         ]
 
         # Add chat template if specified
@@ -111,13 +128,73 @@ defmodule Quicksilver.Backends.LlamaCpp do
         To stop: Quicksilver.Backends.LlamaCpp.stop_standalone()
         """)
 
-        # Spawn detached - not linked to any process
+        # Start server in detached mode (using nohup to truly detach from terminal)
+        # We redirect output to /dev/null for standalone mode since user can check manually if needed
         spawn(fn ->
-          System.cmd(config.server_path, args)
+          # Use exec to replace the shell with llama-server, preventing zombie processes
+          cmd = """
+          exec #{config.server_path} #{Enum.map_join(args, " ", &"\"#{&1}\"")} > /tmp/llama-server-#{config.port}.log 2>&1
+          """
+
+          # Run in background, completely detached
+          System.cmd("sh", ["-c", cmd])
         end)
 
-        Logger.info("✅ Server starting... wait a moment for model to load")
-        :ok
+        # Give it a moment to start, then verify
+        Logger.info("⏳ Waiting for server to start...")
+        :timer.sleep(3000)
+
+        # Check multiple times with backoff to handle slow model loading
+        case wait_for_server_start(config.port, 10) do
+          :ok ->
+            Logger.info("""
+            ✅ Server started successfully!
+
+            Server logs: /tmp/llama-server-#{config.port}.log
+            Model will continue loading in the background (20-60 seconds for large models)
+            You can monitor with: tail -f /tmp/llama-server-#{config.port}.log
+
+            ⚠️  The backend isn't connected yet. To use the server, run:
+            Quicksilver.Backends.LlamaCpp.initialize()
+            """)
+
+            # Auto-initialize the backend to connect to the server
+            case initialize() do
+              :ok ->
+                Logger.info("🔗 Backend connected to server automatically")
+                :ok
+              {:ok, :already_initialized} ->
+                Logger.info("🔗 Backend already connected")
+                :ok
+              {:error, reason} ->
+                Logger.warning("⚠️  Could not auto-connect backend: #{inspect(reason)}")
+                Logger.info("The server is running, but you'll need to wait for model loading to complete")
+                Logger.info("Then run: Quicksilver.Backends.LlamaCpp.initialize()")
+                :ok
+            end
+          {:error, reason} ->
+            # Read log file to diagnose
+            log_content = case File.read("/tmp/llama-server-#{config.port}.log") do
+              {:ok, content} -> content
+              {:error, _} -> "Could not read log file"
+            end
+
+            error_diagnosis = diagnose_server_error(log_content, config)
+
+            Logger.error("""
+            ❌ Server failed to start on port #{config.port}
+
+            #{error_diagnosis}
+
+            Check the log file for details:
+            tail -100 /tmp/llama-server-#{config.port}.log
+
+            Or try running manually to see errors:
+            #{config.server_path} -m #{model_path} --port #{config.port} -ngl #{config.gpu_layers || 99}
+            """)
+            {:error, reason}
+        end
+        end
       end
     end
   end
@@ -171,8 +248,25 @@ defmodule Quicksilver.Backends.LlamaCpp do
       owned_server: false
     }
 
-    # Start initialization asynchronously to avoid circular calls
-    send(self(), :initialize)
+    # Only auto-start if explicitly configured to do so
+    # Default to false for safety - prevents unexpected model loading on startup
+    auto_start = Map.get(config, :auto_start, false)
+
+    if auto_start do
+      # Start initialization asynchronously to avoid circular calls
+      send(self(), :initialize)
+      Logger.info("🔄 Auto-starting backend (auto_start: true)")
+    else
+      Logger.info("""
+      ⏸️  Backend auto-start disabled (auto_start: false or not set)
+
+      To start the server manually, use one of:
+        - Quicksilver.Backends.LlamaCpp.start_standalone()  # Independent server
+        - Quicksilver.Backends.LlamaCpp.start_owned_server()  # Managed by Quicksilver
+
+      Or connect to an existing server on port #{config.port}
+      """)
+    end
 
     {:ok, state}
   end
@@ -256,6 +350,20 @@ defmodule Quicksilver.Backends.LlamaCpp do
         {:reply, :ok, new_state}
       error ->
         {:reply, error, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call(:initialize, _from, state) do
+    if state.ready do
+      {:reply, {:ok, :already_initialized}, state}
+    else
+      case ensure_server_running(state) do
+        {:ok, new_state} ->
+          {:reply, :ok, %{new_state | ready: true}}
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -429,6 +537,115 @@ defmodule Quicksilver.Backends.LlamaCpp do
         _ ->
           Logger.info("⏳ Waiting for model to load... (#{attempts + 1}/#{max_attempts})")
           wait_for_health(base_url, attempts + 1, max_attempts)
+      end
+    end
+  end
+
+  defp diagnose_server_error(output, config) do
+    # Check if server successfully started HTTP listener
+    started_ok = String.contains?(output, "HTTP server is listening")
+    loading_model = String.contains?(output, "loading model")
+
+    cond do
+      # Server started fine but then exited - likely model loading issue
+      started_ok and loading_model ->
+        """
+        🔍 DIAGNOSIS: Server started but crashed during model loading
+
+        The HTTP server started successfully on port #{config.port}, but the process
+        exited while loading the model. Common causes:
+
+        1. **Process was killed/interrupted**
+           - Check if you have another terminal trying to use the same port
+           - Run: lsof -i :#{config.port}
+
+        2. **Model file corruption**
+           - Verify model file integrity
+           - Try: md5sum #{config.model_path}/#{config.model_file}
+
+        3. **Insufficient resources**
+           - VRAM: Run 'nvidia-smi' to check available memory
+           - RAM: This model needs ~19GB VRAM for Q4_K_M quantization
+           - Disk: Check 'df -h' for space
+
+        4. **llama.cpp compatibility** (less likely if it worked before)
+           - Your version: build #{extract_build_number(output)}
+           - Try updating if this is an older build
+
+        💡 To see the FULL error (not truncated), run manually:
+        #{config.server_path} -m #{config.model_path}/#{config.model_file} --port #{config.port} -ngl #{config.gpu_layers || 99}
+        """
+
+      String.contains?(output, "error: invalid argument") ->
+        """
+        🔍 DIAGNOSIS: Model format incompatibility
+
+        The model file format is newer than your llama.cpp version supports.
+        Update llama.cpp to the latest version.
+        """
+
+      String.contains?(output, "CUDA error") or String.contains?(output, "cudaMalloc failed") ->
+        """
+        🔍 DIAGNOSIS: GPU/CUDA error
+
+        Check:
+        1. Run 'nvidia-smi' to verify GPU is available
+        2. Check VRAM usage - #{config.model_file} needs ~19GB VRAM
+        3. Reduce gpu_layers in config if not enough VRAM
+
+        Current config: gpu_layers = #{config.gpu_layers || 99}
+        """
+
+      String.contains?(output, "failed to load") or String.contains?(output, "cannot open") ->
+        """
+        🔍 DIAGNOSIS: Failed to load model file
+
+        Model path: #{config.model_path}/#{config.model_file}
+
+        Check:
+        1. File exists and is readable
+        2. File is not corrupted (re-download if needed)
+        3. You have enough disk space
+        """
+
+      String.contains?(output, "Address already in use") or String.contains?(output, "bind: Address already in use") ->
+        """
+        🔍 DIAGNOSIS: Port #{config.port} is already in use
+
+        Another process is using port #{config.port}.
+
+        Find it: lsof -i :#{config.port}
+        Kill it: killall llama-server
+        """
+
+      true ->
+        """
+        🔍 Unable to auto-diagnose this error.
+
+        Try running manually to see full output:
+        #{config.server_path} -m #{config.model_path}/#{config.model_file} --port #{config.port} -ngl #{config.gpu_layers || 99}
+
+        Check TROUBLESHOOTING.md for common issues.
+        """
+    end
+  end
+
+  defp extract_build_number(output) do
+    case Regex.run(~r/build: (\d+)/, output) do
+      [_, number] -> number
+      _ -> "unknown"
+    end
+  end
+
+  defp wait_for_server_start(port, max_attempts, attempt \\ 1) do
+    if attempt > max_attempts do
+      {:error, :timeout}
+    else
+      if check_port_open(port) do
+        :ok
+      else
+        :timer.sleep(1000)
+        wait_for_server_start(port, max_attempts, attempt + 1)
       end
     end
   end

@@ -150,6 +150,67 @@ See `config/config.exs` for llama.cpp server settings:
 - Server port
 - GPU layers
 - Context size
+- **auto_start** - Set to `true` to automatically load model on startup (defaults to `false`)
+
+### Backend Management
+
+Quicksilver provides flexible control over the LLM backend:
+
+#### Manual Start (Default - Recommended)
+
+By default, Quicksilver does NOT auto-start the server. This prevents unexpected resource usage:
+
+```elixir
+# config/config.exs
+llama_cpp: %{
+  auto_start: false  # or omit - defaults to false
+}
+```
+
+#### Auto-Start
+
+To automatically load the model on startup, set `auto_start: true`:
+
+```elixir
+# config/config.exs
+llama_cpp: %{
+  model_file: "Llama-3.3-70B-Instruct-Q4_K_M.gguf",
+  auto_start: false  # Don't load model on startup
+}
+```
+
+Then start the backend manually when ready:
+
+**Option 1: Standalone Server (Recommended)**
+```elixir
+# Start server that persists across Quicksilver restarts
+iex> Quicksilver.Backends.LlamaCpp.start_standalone()
+
+# Later, when done:
+iex> Quicksilver.Backends.LlamaCpp.stop_standalone()
+```
+
+**Option 2: Managed Server**
+```elixir
+# Server shuts down when Quicksilver exits
+iex> Quicksilver.Backends.LlamaCpp.start_owned_server()
+```
+
+**Option 3: Auto-Initialize**
+```elixir
+# Connect to existing server or start new one
+iex> Quicksilver.Backends.LlamaCpp.initialize()
+```
+
+#### Checking Server Status
+
+```elixir
+iex> Quicksilver.Backends.LlamaCpp.server_running?()
+true
+
+iex> Quicksilver.Backends.LlamaCpp.health_check(LlamaCpp)
+:ok
+```
 
 ## Project Status
 

@@ -2,7 +2,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   @moduledoc """
   Builds call/dependency graph from parsed entities.
   """
-  alias Quicksilver.RepositoryMap.Parser.Entity
   require Logger
 
   @doc """

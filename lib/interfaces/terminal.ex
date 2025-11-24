@@ -63,7 +63,7 @@ defmodule Quicksilver.Interfaces.Terminal do
 
   defp loop(state) do
     agent_info = @available_agents[state.current_agent]
-    prompt = IO.gets("you> ") |> String.trim()
+    prompt = read_multi_line_input()
 
     case parse_command(prompt) do
       {:command, :help} ->
@@ -109,8 +109,8 @@ defmodule Quicksilver.Interfaces.Terminal do
         loop(state)
 
       {:message, text} ->
-        new_history = handle_message(text, state.history, state.current_agent)
-        loop(%{state | history: new_history})
+        new_state = handle_message(text, state)
+        loop(new_state)
     end
   end
 
@@ -144,8 +144,16 @@ defmodule Quicksilver.Interfaces.Terminal do
     agent               - Show current agent
     agent <name>        - Switch to a different agent
 
-    Just type normally to chat!
-    The current agent will process your messages.
+    Multi-line input:
+    ─────────────────────────────────
+    End a line with \\ to continue on the next line.
+    Example:
+      you> Please fix these warnings \\
+      ...> warning: undefined function
+      ...> warning: unused variable
+
+    The current agent will process your messages with full
+    conversation history for better context awareness.
 
     """)
   end
@@ -212,39 +220,54 @@ defmodule Quicksilver.Interfaces.Terminal do
     IO.puts("--- End History ---\n")
   end
 
-  defp handle_message(text, history, current_agent) do
+  defp handle_message(text, state) do
     user_msg = %{role: "user", content: text}
-    agent_info = @available_agents[current_agent]
+    agent_info = @available_agents[state.current_agent]
 
     IO.write("#{agent_info.name}> ")
 
-    # Route to the appropriate agent
-    case execute_with_agent(agent_info, text) do
+    # Route to the appropriate agent, passing conversation history
+    case execute_with_agent(agent_info, text, state.history) do
       {:ok, response} ->
         response = String.trim(response)
         IO.puts(response)
         IO.puts("")
 
         # Update history
-        history ++ [user_msg, %{role: "assistant", content: response}]
+        new_history = state.history ++ [user_msg, %{role: "assistant", content: response}]
+        %{state | history: new_history}
 
       {:error, :not_ready} ->
-        IO.puts("⏸️  Backend not ready yet, please wait...\n")
-        history
+        IO.puts("""
+        ⏸️  Backend not ready
+
+        The LLM backend hasn't finished loading yet. This usually means:
+        1. The model is still loading (large models take 30-60 seconds)
+        2. The server failed to start (check logs above for errors)
+
+        To check status:
+          - Run: Quicksilver.Backends.LlamaCpp.health_check(LlamaCpp)
+          - Or wait a moment and try again
+
+        If the server failed to start, you should see error messages above.
+        See TROUBLESHOOTING.md for help with common issues.
+        """)
+        state
 
       {:error, reason} ->
         IO.puts("❌ Error: #{inspect(reason)}\n")
-        history
+        state
     end
   end
 
-  defp execute_with_agent(agent_info, text) do
+  defp execute_with_agent(agent_info, text, history) do
     # Check if agent module has execute_task/3 function (like ToolAgent)
     if function_exported?(agent_info.module, :execute_task, 3) do
       agent_info.module.execute_task(
         agent_info.process_name,
         text,
-        workspace_root: File.cwd!()
+        workspace_root: File.cwd!(),
+        conversation_history: history
       )
     else
       # Fallback for agents without execute_task - use direct LLM
@@ -253,6 +276,39 @@ defmodule Quicksilver.Interfaces.Terminal do
         LlamaCpp,
         [%{role: "user", content: text}]
       )
+    end
+  end
+
+  defp read_multi_line_input() do
+    first_line = IO.gets("you> ")
+
+    if first_line == :eof do
+      ""
+    else
+      first_line = String.trim(first_line)
+
+      # Check if user wants multi-line input (ends with backslash)
+      if String.ends_with?(first_line, "\\") do
+        # Remove the trailing backslash and read more lines
+        base = String.trim_trailing(first_line, "\\")
+        more_lines = read_continuation_lines([])
+        Enum.join([base | more_lines], "\n") |> String.trim()
+      else
+        first_line
+      end
+    end
+  end
+
+  defp read_continuation_lines(acc) do
+    line = IO.gets("...> ") |> String.trim()
+
+    if String.ends_with?(line, "\\") do
+      # Continue reading
+      base = String.trim_trailing(line, "\\")
+      read_continuation_lines([base | acc])
+    else
+      # Done - reverse to maintain order
+      Enum.reverse([line | acc])
     end
   end
 end

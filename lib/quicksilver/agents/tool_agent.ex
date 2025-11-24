@@ -84,11 +84,12 @@ defmodule Quicksilver.Agents.ToolAgent do
     max_iterations = Keyword.get(opts, :max_iterations, state.max_iterations)
     workspace_root = Keyword.get(opts, :workspace_root, state.workspace_root)
     per_iteration_timeout = Keyword.get(opts, :per_iteration_timeout, @default_timeout)
+    conversation_history = Keyword.get(opts, :conversation_history, [])
 
     context = %{workspace_root: workspace_root}
 
-    # Start fresh conversation for this task
-    initial_history = [%{role: "user", content: task}]
+    # Build initial history from conversation context + new task
+    initial_history = conversation_history ++ [%{role: "user", content: task}]
 
     Logger.info("Executing task: #{String.slice(task, 0..100)}...")
 

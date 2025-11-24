@@ -6,7 +6,8 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   use GenServer
   require Logger
 
-  alias Quicksilver.RepositoryMap.{Parser, Graph, Cache, Formatter}
+  alias Quicksilver.RepositoryMap.{Parser, Cache, Formatter}
+  alias Quicksilver.RepositoryMap.Graph, as: RepoGraph
 
   defstruct [:repo_path, :map, :graph, :scores, :last_updated]
 
@@ -149,8 +150,8 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
 
   defp generate_map(repo_path) do
     with {:ok, parse_result} <- Parser.RepositoryParser.parse(repo_path),
-         graph <- Graph.Builder.build(parse_result.entities),
-         scores <- Graph.Ranker.calculate_ranks(graph) do
+         graph <- RepoGraph.Builder.build(parse_result.entities),
+         scores <- RepoGraph.Ranker.calculate_ranks(graph) do
       map_data = %{
         map: parse_result,
         graph: graph,
