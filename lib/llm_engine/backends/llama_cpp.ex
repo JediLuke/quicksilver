@@ -111,6 +111,8 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
           {:ok, :already_running}
         else
 
+        cleanup_orphans(config.port)
+
         args = [
           "--model", model_path,
           "--host", "127.0.0.1",
@@ -150,6 +152,18 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
         # Check multiple times with backoff to handle slow model loading
         case wait_for_server_start(config.port, 10) do
           :ok ->
+            # Write PID file for the standalone server
+            case System.cmd("lsof", ["-ti", ":#{config.port}"], stderr_to_stdout: true) do
+              {pid_str, 0} ->
+                pid_str |> String.trim() |> String.split("\n") |> List.first() |> then(fn pid ->
+                  case Integer.parse(pid) do
+                    {os_pid, _} -> write_pid_file(config.port, os_pid)
+                    _ -> :ok
+                  end
+                end)
+              _ -> :ok
+            end
+
             Logger.info("""
             Server started successfully!
 
@@ -215,9 +229,11 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
           Logger.info("Stopping standalone server (PID: #{pid}) on port #{port}")
           System.cmd("kill", ["-15", pid])
         end)
+        remove_pid_file(port)
         :ok
       _ ->
         Logger.info("No server found on port #{port}")
+        remove_pid_file(port)
         {:error, :no_server_found}
     end
   end
@@ -236,6 +252,16 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
       {:error, _} ->
         false
     end
+  end
+
+  @doc """
+  Clean up orphaned llama-server processes on the configured port (or specified port).
+  Escape hatch for when things go wrong — kills any orphan found via PID file or lsof.
+  """
+  def cleanup(port \\ nil) do
+    config = Application.get_env(:quicksilver, __MODULE__) |> Map.new()
+    port = port || config.port
+    cleanup_orphans(port)
   end
 
   @impl GenServer
@@ -302,6 +328,8 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
             Logger.debug("Process already exited")
         end
       end
+
+      remove_pid_file(state.config.port)
     end
     :ok
   end
@@ -540,6 +568,8 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
       raise "llama.cpp server not found at #{config.server_path}. Please build or download it first."
     end
 
+    cleanup_orphans(config.port)
+
     model_path = config.model_path <> "/" <> config.model_file
     log_file = "/tmp/llama-server-owned-#{config.port}.log"
 
@@ -566,6 +596,11 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
       {:spawn, "/bin/sh -c #{shell_quote(shell_cmd)}"},
       [:exit_status]
     )
+
+    case Port.info(port, :os_pid) do
+      {:os_pid, os_pid} -> write_pid_file(config.port, os_pid)
+      nil -> Logger.warning("Could not get OS PID for PID file")
+    end
 
     Logger.info("llama.cpp server linked to Quicksilver (will shutdown with app)")
     Logger.info("Model loading in progress (this may take 30-60 seconds)...")
@@ -723,5 +758,76 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
     3. **Model file corrupted**
        -> Re-download the model file
     """
+  end
+
+  # --- PID file management ---
+
+  defp pid_file_path(port), do: "/tmp/quicksilver-llama-server-#{port}.pid"
+
+  defp write_pid_file(port, os_pid) do
+    File.write(pid_file_path(port), to_string(os_pid))
+  end
+
+  defp read_pid_file(port) do
+    case File.read(pid_file_path(port)) do
+      {:ok, content} ->
+        case Integer.parse(String.trim(content)) do
+          {pid, ""} -> {:ok, pid}
+          _ -> :error
+        end
+      {:error, _} -> :error
+    end
+  end
+
+  defp remove_pid_file(port) do
+    File.rm(pid_file_path(port))
+  end
+
+  defp process_alive?(os_pid) do
+    case System.cmd("kill", ["-0", to_string(os_pid)], stderr_to_stdout: true) do
+      {_, 0} -> true
+      _ -> false
+    end
+  end
+
+  defp cleanup_orphans(port) do
+    # Stage 1: PID file check
+    case read_pid_file(port) do
+      {:ok, old_pid} ->
+        if process_alive?(old_pid) do
+          Logger.info("Found orphaned llama-server (PID: #{old_pid}), cleaning up...")
+          System.cmd("kill", ["-15", to_string(old_pid)])
+          :timer.sleep(1000)
+
+          if process_alive?(old_pid) do
+            Logger.warning("Orphan still alive, sending SIGKILL (PID: #{old_pid})")
+            System.cmd("kill", ["-9", to_string(old_pid)])
+            :timer.sleep(500)
+          end
+        end
+
+        remove_pid_file(port)
+
+      :error ->
+        :ok
+    end
+
+    # Stage 2: lsof fallback — kill anything still holding the port
+    case System.cmd("lsof", ["-ti", ":#{port}"], stderr_to_stdout: true) do
+      {pids, 0} ->
+        pids
+        |> String.trim()
+        |> String.split("\n")
+        |> Enum.each(fn pid_str ->
+          Logger.info("Killing leftover process #{pid_str} on port #{port}")
+          System.cmd("kill", ["-15", pid_str])
+        end)
+        :timer.sleep(1000)
+
+      _ ->
+        :ok
+    end
+
+    :ok
   end
 end
