@@ -2,52 +2,26 @@ defmodule Quicksilver do
   @moduledoc """
   Quicksilver - The Alchemical Agentic Framework for Elixir
 
-  ## Quick Start (MVP)
+  ## Quick Start
 
   1. Update config/config.exs with your llama.cpp paths
   2. Start your application: `iex -S mix`
-  3. Run the example:
+  3. Start the terminal chat:
 
-      # Start the backend
-      {:ok, backend} = Quicksilver.start_backend()
+      Quicksilver.chat()
 
-      # Start an agent
-      {:ok, agent} = Quicksilver.start_agent("my_agent", backend)
+  ## Architecture
 
-      # Send it a message
-      Quicksilver.Agents.SampleAgent.send_message("my_agent", "What can you do?")
+  Quicksilver is organized into two independent layers:
 
-  The agent will continuously think and respond in a loop!
+  - **LLM Engine** (`Quicksilver.LlmEngine`) — standalone local LLM server management
+  - **Agentic** (`Quicksilver.Agentic`) — agents, tools, approval, repository map, and interfaces
   """
 
   @doc """
-  Start an agent
+  Start the terminal chat interface.
   """
-  def start_agent(agent_module, opts \\ []) do
-    Quicksilver.Agents.Manager.start_agent(agent_module, opts)
+  def chat(opts \\ []) do
+    Quicksilver.Agentic.Interfaces.Terminal.start(opts)
   end
-
-  @doc """
-  Start a sample agent
-  """
-  def start_sample_agent do
-    start_agent(Quicksilver.Agents.SampleAgent,
-      name: "Alex Trebek"
-    )
-  end
-
-  @doc """
-  List all running agents
-  """
-  def list_agents do
-    Quicksilver.Agents.Manager.list_agents()
-  end
-
-  @doc """
-  Start the terminal chat interface
-  """
-  def chat do
-    Quicksilver.Interfaces.Terminal.start()
-  end
-
 end
