@@ -2,22 +2,26 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
   @moduledoc """
   Simple terminal chat interface for Quicksilver.
 
-  Manages conversation history locally and calls the stateless agent
-  for each user message.
+  Uses a `Quicksilver.Conversation` struct to manage the conversation thread.
   """
 
-  alias Quicksilver.Agentic.Agent
+  alias Quicksilver.Conversation
   alias Quicksilver.LlmEngine.Backends.LlamaCpp
 
   defmodule State do
-    defstruct history: []
+    defstruct [:conversation]
   end
 
   def start(opts \\ []) do
-    # Check if the backend is ready
     case LlamaCpp.health_check(LlamaCpp) do
       :ok ->
-        state = %State{history: Keyword.get(opts, :history, [])}
+        conv = Conversation.new(
+          tools: :all,
+          workspace_root: File.cwd!(),
+          history: Keyword.get(opts, :history, [])
+        )
+
+        state = %State{conversation: conv}
         print_welcome()
         loop(state)
 
@@ -78,10 +82,10 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
 
       {:command, :clear} ->
         IO.puts("\n--- History cleared ---\n")
-        loop(%{state | history: []})
+        loop(%{state | conversation: Conversation.clear(state.conversation)})
 
       {:command, :history} ->
-        show_history(state.history)
+        show_history(Conversation.history(state.conversation))
         loop(state)
 
       {:command, :tools} ->
@@ -161,15 +165,12 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
   defp handle_message(text, state) do
     IO.write("Agent> ")
 
-    case Agent.execute_task(text,
-           workspace_root: File.cwd!(),
-           conversation_history: state.history
-         ) do
-      {:ok, response, updated_history} ->
+    case Conversation.send(state.conversation, text) do
+      {:ok, response, updated_conv} ->
         response = String.trim(response)
         IO.puts(response)
         IO.puts("")
-        %{state | history: updated_history}
+        %{state | conversation: updated_conv}
 
       {:error, :not_ready} ->
         IO.puts("""

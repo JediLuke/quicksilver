@@ -1,22 +1,35 @@
 defmodule Quicksilver do
   @moduledoc """
-  Quicksilver - The Alchemical Agentic Framework for Elixir
+  Quicksilver - Ephemeral LLM Conversation Threads for Elixir
 
   ## Quick Start
 
-  1. Update config/config.exs with your llama.cpp paths
-  2. Start your application: `iex -S mix`
-  3. Start the terminal chat:
+      # Bare chat
+      conv = Quicksilver.new_conversation()
+      {:ok, response, conv} = Quicksilver.Conversation.send(conv, "Hello!")
 
+      # Tool-calling conversation
+      conv = Quicksilver.new_conversation(tools: :all, workspace_root: ".")
+      {:ok, response, conv} = Quicksilver.Conversation.send(conv, "Read mix.exs")
+
+      # Terminal chat interface
       Quicksilver.chat()
 
   ## Architecture
 
-  Quicksilver is organized into two independent layers:
+  Quicksilver is organized into three layers:
 
+  - **Conversation** (`Quicksilver.Conversation`) — ephemeral conversation threads
+  - **Agentic** (`Quicksilver.Agentic`) — tools, approval, repository map
   - **LLM Engine** (`Quicksilver.LlmEngine`) — standalone local LLM server management
-  - **Agentic** (`Quicksilver.Agentic`) — agents, tools, approval, repository map, and interfaces
   """
+
+  @doc """
+  Create a new conversation.
+
+  See `Quicksilver.Conversation.new/1` for options.
+  """
+  defdelegate new_conversation(opts \\ []), to: Quicksilver.Conversation, as: :new
 
   @doc """
   Start the terminal chat interface.

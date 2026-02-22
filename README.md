@@ -1,10 +1,10 @@
 # Quicksilver
 
-Quicksilver – The Alchemical Agentic Framework for Elixir
+Quicksilver – Ephemeral LLM Conversation Threads for Elixir
 
-Quicksilver is an Elixir-native AI sidekick framework for building intelligent, modular agents powered by local LLMs. Designed for hackers, researchers, and builders, Quicksilver lets you:
+Quicksilver provides ephemeral, tool-capable conversation threads powered by local LLMs. The simplest conversation is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
 
-- Run a stateless tool-calling agent with iterative reasoning
+- Create ephemeral conversation threads with optional tool-calling
 - Plug into any LLM backend (currently llama.cpp, extensible via behaviour)
 - Use modular tools for file operations, code search, and repository analysis
 - Harness Elixir's concurrency for parallel code parsing and PageRank analysis
@@ -12,10 +12,36 @@ Quicksilver is an Elixir-native AI sidekick framework for building intelligent, 
 
 ## Quick Start
 
-### Start the Terminal Chat Interface
+### Conversations
+
+```elixir
+# Bare chat — no tools, no system prompt
+conv = Quicksilver.new_conversation()
+{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Hello!")
+{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Tell me more")
+
+# Chat with a system prompt
+conv = Quicksilver.new_conversation(system_prompt: "You are an Elixir expert.")
+{:ok, response, conv} = Quicksilver.Conversation.send(conv, "What is GenServer?")
+
+# Tool-calling conversation (iterative reasoning loop)
+conv = Quicksilver.new_conversation(
+  tools: :all,
+  workspace_root: File.cwd!()
+)
+{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Read mix.exs")
+
+# Selective tools
+conv = Quicksilver.new_conversation(tools: ["read_file", "search_files"])
+
+# History management
+Quicksilver.Conversation.history(conv)  # => [%{role: "user", ...}, ...]
+conv = Quicksilver.Conversation.clear(conv)  # clear history, keep config
+```
+
+### Terminal Chat Interface
 
 ```bash
-# Easiest way - start chatting immediately
 mix run start_chat.exs
 ```
 
@@ -25,83 +51,60 @@ iex -S mix
 iex> Quicksilver.chat()
 ```
 
-### Try These Commands
-
-Once in the terminal:
-- `tools` - See what the agent can do
-- `help` - Show all commands
-- `exit` - Quit
-
-### Example Questions
-
-**File Operations:**
-```
-Read the mix.exs file
-What dependencies does this project have?
-Show me the contents of lib/agentic/tools/registry.ex
-```
-
-**Search Operations:**
-```
-Search for defmodule in the codebase
-Find all files with "GenServer" in them
-Search for the word "tool" in .ex files
-```
-
-**Analysis:**
-```
-What is this project about?
-What are the main components of this project?
-List all the modules in lib/agentic/tools/
-```
+Commands: `tools`, `help`, `history`, `clear`, `exit`
 
 ## Architecture
 
-Quicksilver is organized into two independent layers:
-
-1. **LLM Engine** (`lib/llm_engine/`) — standalone local LLM server management
-2. **Agentic** (`lib/agentic/`) — agents, tools, approval, repository map, and interfaces
+Quicksilver is organized into three layers:
 
 ```
-Terminal → Stateless Agent → LLM Backend
-                ↓
-             Tools
-             (read_file, search_files, edit_file, ...)
+Layer Above (your code)
+  - Goals, directives, persistence
+  - Owns one or more Conversations
+          |
+          v
+Quicksilver.Conversation (struct, not process)
+  - Ephemeral message thread
+  - Optional tool-calling loop
+  - No persistence, no goals
+          |
+          v
+Quicksilver.LlmEngine
+  - Backend-agnostic completions
+  - Server lifecycle management
 ```
 
-The agent is stateless — the terminal manages conversation history. No agent processes in the supervision tree.
+| Concern | Quicksilver | Layer Above |
+|---------|-------------|-------------|
+| LLM calls | Yes | No (uses Quicksilver) |
+| Message history | In-memory, ephemeral | Persists to disk/DB |
+| Tool execution | Yes | Registers custom tools |
+| Conversation threads | Creates and manages | Owns one or more |
+| Goals / directives | No | Yes |
+| Long-term memory | No | Yes |
 
-## Features
-
-### Tool-Calling Agent
-
-The stateless **Agent** can autonomously use tools to answer your questions:
-
-- **read_file** - Read any file in the workspace
-- **search_files** - Search the codebase with ripgrep/grep
-- **list_files** - List files with glob patterns
-- **create_file** / **edit_file** - Create and edit files (with approval)
-- **run_tests** - Run mix test
-- **get_repository_context** - PageRank-based code analysis
-- Iterative reasoning (up to 50 tool calls per task)
-- Robust JSON parsing for various LLM formats
-
-### Backend Abstraction
-
-Works with any LLM backend:
+### Supervision Tree
 
 ```elixir
-# Via the LLM Engine facade
-{:ok, response} = Quicksilver.LlmEngine.complete(
-  [%{role: "user", content: "Hello!"}]
-)
-
-# Direct backend usage
-{:ok, response} = Quicksilver.LlmEngine.Backends.LlamaCpp.complete(
-  Quicksilver.LlmEngine.Backends.LlamaCpp,
-  [%{role: "user", content: "Hello!"}]
-)
+Quicksilver.Application
+├── Quicksilver.LlmEngine.Backends.LlamaCpp (GenServer)
+├── Quicksilver.Agentic.Tools.Registry (GenServer)
+└── Quicksilver.Agentic.RepositoryMap.Cache.Server (GenServer)
 ```
+
+Conversations are structs — no processes, no supervision needed.
+
+## Tools
+
+**Read-only (auto-approved):**
+- `read_file` - Read any file in the workspace
+- `search_files` - Search the codebase with ripgrep/grep
+- `list_files` - List files with glob patterns
+- `get_repository_context` - PageRank-based code analysis
+- `run_tests` - Run mix test
+
+**Write (require approval):**
+- `create_file` / `edit_file` - Create and edit files
 
 ## Adding New Tools
 
@@ -138,36 +141,38 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
 ### Backend Management
 
 ```elixir
-# Start standalone server (persists across app restarts)
 Quicksilver.LlmEngine.Backends.LlamaCpp.start_standalone()
-
-# Check status
 Quicksilver.LlmEngine.Backends.LlamaCpp.server_running?()
 Quicksilver.LlmEngine.health_check()
-
-# Stop standalone server
 Quicksilver.LlmEngine.Backends.LlamaCpp.stop_standalone()
+```
+
+## API Reference
+
+```elixir
+# Conversations
+conv = Quicksilver.new_conversation(opts)
+{:ok, response, conv} = Quicksilver.Conversation.send(conv, message)
+Quicksilver.Conversation.history(conv)
+Quicksilver.Conversation.clear(conv)
+
+# Terminal
+Quicksilver.chat()
+
+# LLM Engine
+Quicksilver.LlmEngine.complete(messages, opts)
+Quicksilver.LlmEngine.health_check()
+
+# Tools
+Quicksilver.Agentic.list_tools()
+Quicksilver.Agentic.register_tool(module)
+Quicksilver.Agentic.execute_tool(name, args, context)
 ```
 
 ## Testing
 
 ```bash
-mix test    # All tests
-```
-
-## Advanced Usage
-
-### Direct API Access
-
-Call the agent directly from Elixir code:
-
-```elixir
-{:ok, response, _history} = Quicksilver.Agentic.execute_task(
-  "What is this project about?",
-  workspace_root: File.cwd!()
-)
-
-IO.puts(response)
+mix test
 ```
 
 ## Troubleshooting

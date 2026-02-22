@@ -4,22 +4,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-Quicksilver is an Elixir-native agentic framework with tool-calling capabilities, organized into two independent layers:
+Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling, organized into three layers:
 
-1. **LLM Engine** (`lib/llm_engine/`) — standalone local LLM server management, usable independently
-2. **Agentic** (`lib/agentic/`) — agents, tools, approval, repository map, and interfaces
+1. **Conversation** (`lib/conversation/`) — ephemeral conversation threads (struct, not process)
+2. **Agentic** (`lib/agentic/`) — tools, approval, repository map, and interfaces
+3. **LLM Engine** (`lib/llm_engine/`) — standalone local LLM server management
 
-The LLM engine knows nothing about agents. Agents depend on the engine for completions. Tools are backend-agnostic.
+The Conversation is the primary abstraction. A bare chat with no tools and a sophisticated tool-calling loop are architecturally the same thing — a `%Quicksilver.Conversation{}` struct tracking message history and configuration.
 
 ```
-Terminal Interface (lib/agentic/interfaces/terminal.ex)
-    ↓
-Stateless Agent (lib/agentic/agent.ex)
-    ↓
-LLM Backend (lib/llm_engine/backends/llama_cpp.ex) → External LLM Server
-    ↓
-Tools (Registry + Individual Tools in lib/agentic/tools/)
+Layer Above (future "agent" libraries)
+  - Goals, directives, persistence, long memory
+  - Owns one or more Quicksilver Conversations
+                    |
+                    v
+Quicksilver.Conversation
+  - Ephemeral message thread (struct, not process)
+  - Optional tool-calling loop
+  - Optional system prompt & context
+  - No persistence, no goals, no directives
+                    |
+                    v
+Quicksilver.LlmEngine
+  - Backend-agnostic LLM completions
+  - Server lifecycle management
 ```
+
+### What Quicksilver IS
+- An ephemeral conversation thread manager
+- A tool-calling execution engine
+- A local LLM backend manager
+- A terminal chat interface
+
+### What Quicksilver IS NOT
+- An agent framework (agents live above)
+- A persistence layer (no disk, no database)
+- A goal/directive system
+- A long-term memory system
 
 ### Supervision Tree
 
@@ -30,18 +51,20 @@ Quicksilver.Supervisor (strategy: :one_for_one)
 └── Quicksilver.Agentic.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Agents are **stateless** — the terminal manages conversation history and calls `Agent.execute_task/2` directly. No agent processes in the supervision tree.
+Conversations are **structs, not processes** — the caller owns the struct and manages its lifecycle.
 
 ### Key Design Patterns
 
-**1. Stateless Agent with Per-Iteration Timeouts**
+**1. Conversation as Primary Abstraction**
 
-The Agent (`lib/agentic/agent.ex`) implements an iterative reasoning loop:
-- Max 50 iterations per task (configurable)
-- Each iteration has a 5-minute timeout (per-iteration, not total)
-- Uses `Task.async` + `Task.yield` for per-iteration timeout control
-- On each iteration: prompt LLM → parse response → execute tool → add to history → repeat
-- Returns `{:ok, response, updated_history}` — caller manages state
+The `%Quicksilver.Conversation{}` struct tracks:
+- Message history (accumulated back-and-forth)
+- Configuration (backend, tools, system prompt, timeouts)
+- No persistence — Quicksilver never saves to disk
+
+Two send strategies based on configuration:
+- **Simple** (`lib/conversation/simple.ex`): One LLM call, no tool parsing. For bare chats.
+- **ToolCalling** (`lib/conversation/tool_calling.ex`): Iterative loop until text response. For tool-calling conversations.
 
 **2. Tool System Architecture**
 
@@ -77,15 +100,19 @@ lib/
 ├── quicksilver.ex                          # Top-level convenience facade
 ├── application.ex                          # Supervision tree
 │
+├── conversation/                           # Ephemeral conversation threads
+│   ├── conversation.ex                     # Struct + public API (new, send, history, clear)
+│   ├── simple.ex                           # Simple send strategy (no tools)
+│   └── tool_calling.ex                     # Tool-calling send strategy
+│
 ├── llm_engine/                             # Standalone LLM backend management
 │   ├── llm_engine.ex                       # Public API facade
 │   ├── backend.ex                          # Backend behaviour
 │   └── backends/
 │       └── llama_cpp.ex                    # LlamaCpp GenServer
 │
-└── agentic/                                # Agents + Tools + Interfaces
+└── agentic/                                # Tools + Interfaces
     ├── agentic.ex                          # Public API facade
-    ├── agent.ex                            # Stateless agent (request/response)
     ├── tools.ex                            # Tool registration convenience
     ├── tools/
     │   ├── behaviour.ex
@@ -139,7 +166,7 @@ All write tools create `.backup.timestamp` files before modifications.
 3. Add to `lib/agentic/tools.ex` `register_default_tools/0`
 4. If destructive: integrate with approval system via context
 
-## Agent Execution Context
+## Conversation Execution Context
 
 When tools execute, they receive a `context` map with:
 - `:workspace_root` - Base directory for file operations
@@ -162,11 +189,13 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
 
 ## Key Behaviours to Maintain
 
+**Conversation is a struct** — no GenServer, no process, no supervision. The caller owns the struct.
+
 **Tool Uniqueness Validation**: The `edit_file` tool requires `old_string` to appear exactly once in the file.
 
 **Backup Creation**: Always create backups before destructive operations (pattern: `path.backup.timestamp`).
 
-**Per-Iteration Timeouts**: When modifying Agent, maintain per-iteration timeouts rather than total task timeouts.
+**Per-Iteration Timeouts**: When modifying the tool-calling strategy, maintain per-iteration timeouts rather than total task timeouts.
 
 **Tool Result Formatting**: Use `Formatter.format_tool_result/2` for consistent formatting.
 
@@ -180,5 +209,5 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
 
 1. **Config returns keyword list** - `Application.get_env(:quicksilver, Module)` returns a keyword list, convert with `Map.new/1` before using with `Map.merge/2`
 2. **Tool registration timing** - Tools must be registered after supervision tree starts
-3. **Agent is stateless** - No GenServer state; the terminal manages conversation history
+3. **Conversation is a struct** — no GenServer state; the caller (terminal, test harness, higher-level agent) manages the `%Conversation{}` struct
 4. **Approval policy** - Write tools should check `should_request_approval?/3` and call `Interactive.request_approval/2`

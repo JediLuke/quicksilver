@@ -199,6 +199,35 @@ defmodule Quicksilver.Agentic.Tools.Formatter do
   end
 
   @doc """
+  Build a simple prompt without tool instructions.
+
+  Used by bare conversations (no tools). Includes the system prompt (if any)
+  and formatted conversation history.
+  """
+  @spec simple_prompt(String.t() | nil, [map()]) :: String.t()
+  def simple_prompt(nil, history) do
+    conversation = format_conversation_history(history)
+
+    """
+    #{conversation}
+
+    Assistant:
+    """
+  end
+
+  def simple_prompt(system_prompt, history) do
+    conversation = format_conversation_history(history)
+
+    """
+    #{system_prompt}
+
+    #{conversation}
+
+    Assistant:
+    """
+  end
+
+  @doc """
   Build conversation history string for the LLM.
 
   Takes a list of message maps and formats them into a prompt.
