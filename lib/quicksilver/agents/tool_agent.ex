@@ -67,15 +67,25 @@ defmodule Quicksilver.Agents.ToolAgent do
             "Backend module #{inspect(backend_module)} must implement Quicksilver.Backends.Backend behaviour"
     end
 
+    # Agent can specify which tools it wants access to
+    # If not specified, defaults to all registered tools
+    allowed_tools = Keyword.get(opts, :tools, :all)
+
     state = %{
       backend_module: backend_module,
       backend_pid: backend_pid,
       max_iterations: Keyword.get(opts, :max_iterations, @default_max_iterations),
       workspace_root: Keyword.get(opts, :workspace_root, File.cwd!()),
-      conversation_history: []
+      conversation_history: [],
+      allowed_tools: allowed_tools
     }
 
-    Logger.info("ToolAgent started with backend: #{inspect(backend_module)}")
+    tool_info = case allowed_tools do
+      :all -> "all available tools"
+      tools when is_list(tools) -> "#{length(tools)} specific tools"
+    end
+
+    Logger.info("ToolAgent started with backend: #{inspect(backend_module)}, tools: #{tool_info}")
     {:ok, state}
   end
 
@@ -130,8 +140,8 @@ defmodule Quicksilver.Agents.ToolAgent do
     else
       Logger.debug("Iteration #{iteration}, remaining: #{iterations_left}")
 
-      # Get available tools
-      tools = Registry.list_tools()
+      # Get available tools (filtered by agent's allowed_tools)
+      tools = get_available_tools(state)
 
       # Build prompt
       prompt = build_prompt(tools, history)
@@ -217,6 +227,21 @@ defmodule Quicksilver.Agents.ToolAgent do
 
     Assistant:
     """
+  end
+
+  # Get tools available to this agent (respects allowed_tools filter)
+  defp get_available_tools(state) do
+    all_tools = Registry.list_tools()
+
+    case state.allowed_tools do
+      :all ->
+        # Agent has access to all registered tools
+        all_tools
+
+      tool_names when is_list(tool_names) ->
+        # Agent has access to specific tools only
+        Enum.filter(all_tools, fn tool -> tool.name in tool_names end)
+    end
   end
 
 end

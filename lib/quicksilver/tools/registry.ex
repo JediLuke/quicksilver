@@ -81,7 +81,7 @@ defmodule Quicksilver.Tools.Registry do
       }
 
       new_state = put_in(state, [:tools, tool_name], tool_info)
-      Logger.info("Registered tool: #{tool_name}")
+      Logger.debug("Registered tool: #{tool_name}")
       {:reply, {:ok, tool_name}, new_state}
     else
       {:reply, {:error, "Module does not implement Quicksilver.Tools.Behaviour"}, state}

@@ -240,6 +240,9 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
   @impl GenServer
   def init(config) do
+    # Trap exits so terminate/2 is called on shutdown
+    Process.flag(:trap_exit, true)
+
     state = %__MODULE__{
       config: config,
       server_port: nil,
@@ -272,25 +275,53 @@ defmodule Quicksilver.Backends.LlamaCpp do
   end
 
   @impl GenServer
-  def terminate(reason, state) do
+  def terminate(_reason, state) do
     # Clean up owned server on shutdown
     if state.owned_server && state.server_port do
-      Logger.info("🛑 Shutting down llama.cpp server...")
+      Logger.info("🛑 Shutting down owned llama.cpp server...")
+
+      # Get the OS PID of the llama-server process before closing the port
+      os_pid = case Port.info(state.server_port, :os_pid) do
+        {:os_pid, pid} -> pid
+        nil -> nil
+      end
+
+      # Try to close the port gracefully
       try do
         Port.close(state.server_port)
+        Logger.info("Port closed successfully")
       catch
         :error, :badarg ->
-          Logger.warning("""
-          ⚠️  Port close failed - port was already closed.
-          This can happen if the llama.cpp server exited before we called terminate/2.
-          Details:
-            - Terminate reason: #{inspect(reason)}
-            - Port: #{inspect(state.server_port)}
-            - Owned server: #{state.owned_server}
-            - Backend ready: #{state.ready}
-          This is usually harmless - the server cleaned up itself.
-          """)
-          :ok
+          Logger.debug("Port was already closed")
+      end
+
+      # If we got the OS PID, make sure the process is actually killed
+      if os_pid do
+        # Give the port a moment to close gracefully
+        :timer.sleep(500)
+
+        # Check if process is still running and kill it if needed
+        case System.cmd("kill", ["-0", "#{os_pid}"], stderr_to_stdout: true) do
+          {_, 0} ->
+            # Process is still running, kill it
+            Logger.info("Sending SIGTERM to llama-server (PID: #{os_pid})")
+            System.cmd("kill", ["-15", "#{os_pid}"])
+
+            # Give it a moment to shutdown gracefully
+            :timer.sleep(1000)
+
+            # Check again and force kill if needed
+            case System.cmd("kill", ["-0", "#{os_pid}"], stderr_to_stdout: true) do
+              {_, 0} ->
+                Logger.warning("Process still running, sending SIGKILL")
+                System.cmd("kill", ["-9", "#{os_pid}"])
+              _ ->
+                Logger.info("✅ llama-server shut down successfully")
+            end
+          _ ->
+            # Process already exited
+            Logger.debug("Process already exited")
+        end
       end
     end
     :ok
@@ -309,22 +340,27 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
   @impl GenServer
   def handle_info({port, {:exit_status, status}}, %{server_port: port} = state) when is_port(port) do
-    Logger.warning("llama.cpp server exited with status #{status}")
+    if status == 0 do
+      Logger.info("llama.cpp server exited normally")
+    else
+      Logger.error("❌ llama.cpp server crashed with exit code #{status}")
+      Logger.error("This usually means the model failed to load or there was a configuration error")
+      Logger.error("Check the logs above for error messages from llama-server")
+    end
     # Mark as not ready since server is gone
     {:noreply, %{state | ready: false, server_port: nil}}
   end
 
   @impl GenServer
+  def handle_info({:EXIT, port, reason}, %{server_port: port} = state) when is_port(port) do
+    Logger.warning("llama.cpp server port exited: #{inspect(reason)}")
+    {:noreply, %{state | ready: false, server_port: nil}}
+  end
+
+  @impl GenServer
   def handle_info(msg, state) do
-    Logger.warning("""
-    ⚠️  Received unexpected message in LlamaCpp backend.
-    Message: #{inspect(msg)}
-    State:
-      - Ready: #{state.ready}
-      - Owned server: #{state.owned_server}
-      - Port: #{inspect(state.server_port)}
-      - Base URL: #{state.base_url}
-    This message was ignored.
+    Logger.debug("""
+    Received message in LlamaCpp backend: #{inspect(msg)}
     """)
     {:noreply, state}
   end
@@ -490,21 +526,23 @@ defmodule Quicksilver.Backends.LlamaCpp do
   end
 
   defp start_server(config) do
-    Logger.info("🔧 Starting llama.cpp server...")
+    Logger.info("🔧 Starting llama.cpp server (owned by Quicksilver)...")
 
     # Ensure llama.cpp binary exists
     unless File.exists?(config.server_path) do
       raise "llama.cpp server not found at #{config.server_path}. Please build or download it first."
     end
 
+    model_path = config.model_path <> "/" <> config.model_file
+
     args = [
-      "--model", config.model_path <> "/" <> config.model_file,
+      "--model", model_path,
       "--host", "127.0.0.1",
       "--port", to_string(config.port),
       "--threads", to_string(config.threads || 16),
       "--ctx-size", to_string(config.ctx_size || 8192),
-      "--n-gpu-layers", to_string(config.gpu_layers || 99),
-      "--log-disable"  # Suppress llama.cpp logs
+      "--n-gpu-layers", to_string(config.gpu_layers || 99)
+      # Removed --log-disable to see errors
     ]
 
     # Add chat template if specified
@@ -514,13 +552,26 @@ defmodule Quicksilver.Backends.LlamaCpp do
       args
     end
 
+    # Log to file so we can debug if needed
+    log_file = "/tmp/llama-server-owned-#{config.port}.log"
+    Logger.info("📝 Server output will be logged to: #{log_file}")
+
     # Use Port to create a linked external process
+    # IMPORTANT: Do NOT use :stderr_to_stdout as it can interfere with proper process cleanup
+    # We trap exits in init/1, so the port will properly notify us when the process dies
     port = Port.open(
       {:spawn_executable, config.server_path},
-      [:binary, :exit_status, args: args]
+      [
+        :exit_status,
+        args: args
+      ]
     )
 
+    # Verify the port is linked
+    port_info = Port.info(port)
     Logger.info("🔗 llama.cpp server linked to Quicksilver (will shutdown with app)")
+    Logger.info("   Port info: #{inspect(port_info)}")
+    Logger.info("⏳ Model loading in progress (this may take 30-60 seconds)...")
     port
   end
 

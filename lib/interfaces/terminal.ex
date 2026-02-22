@@ -36,9 +36,37 @@ defmodule Quicksilver.Interfaces.Terminal do
       IO.puts("Available agents: #{Map.keys(@available_agents) |> Enum.join(", ")}")
       :error
     else
-      state = %State{current_agent: initial_agent, history: []}
-      print_welcome(state)
-      loop(state)
+      # Check if the agent process is actually running
+      agent_info = @available_agents[initial_agent]
+      case Process.whereis(agent_info.process_name) do
+        nil ->
+          IO.puts("""
+          ❌ Agent not available: #{agent_info.name}
+
+          This agent requires an LLM backend, but it wasn't started.
+
+          To use this agent:
+          1. Start the backend:
+             Quicksilver.Backends.LlamaCpp.start_standalone()
+
+          2. Wait for model to load (20-60 seconds)
+
+          3. Start the agent manually:
+             {:ok, pid} = Quicksilver.Agents.ToolAgent.start_link(
+               backend_module: Quicksilver.Backends.LlamaCpp,
+               backend_pid: LlamaCpp,
+               name: Quicksilver.Agents.ToolAgent
+             )
+
+          Or restart Quicksilver with auto_start: true in config/config.exs
+          """)
+          :error
+
+        _pid ->
+          state = %State{current_agent: initial_agent, history: []}
+          print_welcome(state)
+          loop(state)
+      end
     end
   end
 
@@ -71,7 +99,14 @@ defmodule Quicksilver.Interfaces.Terminal do
         loop(state)
 
       {:command, :exit} ->
-        IO.puts("👋 Goodbye!")
+        IO.puts("👋 Goodbye! Shutting down gracefully...")
+        # Trigger graceful shutdown of the application
+        # This ensures all GenServers (including backend) run their terminate/2 callbacks
+        Task.start(fn ->
+          :timer.sleep(500)  # Give time for the message to print
+          System.stop(0)
+        end)
+        :timer.sleep(1000)  # Wait for shutdown
         :ok
 
       {:command, :clear} ->
