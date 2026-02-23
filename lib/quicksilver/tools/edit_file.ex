@@ -1,9 +1,9 @@
-defmodule Quicksilver.Agentic.Tools.EditFile do
+defmodule Quicksilver.Tools.EditFile do
   @moduledoc """
   Tool for editing existing files by replacing exact string matches.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   require Logger
 
@@ -112,13 +112,8 @@ defmodule Quicksilver.Agentic.Tools.EditFile do
   end
 
   defp request_approval_if_needed(path, diff, context) do
-    policy = Map.get(context, :approval_policy, Quicksilver.Agentic.Approval.Policy.default())
-
-    if Quicksilver.Agentic.Approval.Policy.should_request_approval?(policy, "edit_file", %{path: path}) do
-      Quicksilver.Agentic.Approval.Interactive.request_approval(:file_edit, %{path: path, diff: diff})
-    else
-      :approved
-    end
+    approve_fn = Map.get(context, :approve, fn _, _ -> :approved end)
+    approve_fn.(:file_edit, %{path: path, diff: diff})
   end
 
   defp create_backup(path) do

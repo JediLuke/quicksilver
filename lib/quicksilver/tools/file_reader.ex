@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools.FileReader do
+defmodule Quicksilver.Tools.FileReader do
   @moduledoc """
   Tool for reading file contents from the workspace.
 
@@ -6,7 +6,7 @@ defmodule Quicksilver.Agentic.Tools.FileReader do
   Files are truncated if they exceed a reasonable size to avoid context overflow.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   require Logger
 

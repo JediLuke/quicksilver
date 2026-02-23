@@ -1,8 +1,8 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Parser.ElixirParser do
+defmodule Quicksilver.Tools.RepositoryMap.Parser.ElixirParser do
   @moduledoc """
   Elixir-specific parsing using AST (Code.string_to_quoted)
   """
-  alias Quicksilver.Agentic.RepositoryMap.Parser.Entity
+  alias Quicksilver.Tools.RepositoryMap.Parser.Entity
 
   @doc """
   Parse Elixir code content and extract entities.

@@ -29,18 +29,13 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
   end
 
   @impl Quicksilver.LlmEngine.Backend
-  def complete(pid, messages, options \\ []) do
-    GenServer.call(pid, {:complete, messages, options}, 30_000)
+  def complete(messages, options \\ []) do
+    GenServer.call(__MODULE__, {:complete, messages, options}, 30_000)
   end
 
   @impl Quicksilver.LlmEngine.Backend
-  def stream(_pid, _messages, _options) do
-    {:error, :not_implemented}
-  end
-
-  @impl Quicksilver.LlmEngine.Backend
-  def health_check(pid) do
-    GenServer.call(pid, :health_check)
+  def health_check(_options \\ []) do
+    GenServer.call(__MODULE__, :health_check)
   end
 
   @doc """

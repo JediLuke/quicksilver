@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap do
+defmodule Quicksilver.Tools.RepositoryMap do
   @moduledoc """
   High-level API for integrating repository maps with coding agents.
   Manages repository map lifecycle and provides context generation.
@@ -6,8 +6,8 @@ defmodule Quicksilver.Agentic.RepositoryMap do
   use GenServer
   require Logger
 
-  alias Quicksilver.Agentic.RepositoryMap.{Parser, Cache, Formatter}
-  alias Quicksilver.Agentic.RepositoryMap.Graph, as: RepoGraph
+  alias Quicksilver.Tools.RepositoryMap.{Parser, Cache, Formatter}
+  alias Quicksilver.Tools.RepositoryMap.Graph, as: RepoGraph
 
   defstruct [:repo_path, :map, :graph, :scores, :last_updated]
 

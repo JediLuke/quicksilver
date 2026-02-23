@@ -1,9 +1,9 @@
-defmodule Quicksilver.Agentic.Tools.RunTests do
+defmodule Quicksilver.Tools.RunTests do
   @moduledoc """
   Tool for running Elixir tests and returning results.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   @impl true
   def name, do: "run_tests"

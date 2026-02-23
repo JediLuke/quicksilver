@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Formatter.LLM do
+defmodule Quicksilver.Tools.RepositoryMap.Formatter.LLM do
   @moduledoc """
   Formats repository map for LLM consumption.
   Creates a token-efficient representation of the codebase.

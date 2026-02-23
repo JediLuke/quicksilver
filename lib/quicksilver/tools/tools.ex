@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools do
+defmodule Quicksilver.Tools do
   @moduledoc """
   Convenience module for tool management and registration.
 
@@ -6,7 +6,7 @@ defmodule Quicksilver.Agentic.Tools do
   managing the tools registry.
   """
 
-  alias Quicksilver.Agentic.Tools.{
+  alias Quicksilver.Tools.{
     Registry,
     FileReader,
     SearchFiles,

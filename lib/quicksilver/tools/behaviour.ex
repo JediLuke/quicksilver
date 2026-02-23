@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools.Behaviour do
+defmodule Quicksilver.Tools.Behaviour do
   @moduledoc """
   Behaviour for tool implementations.
 

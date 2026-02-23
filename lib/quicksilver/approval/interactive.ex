@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Approval.Interactive do
+defmodule Quicksilver.Approval.Interactive do
   @moduledoc """
   Interactive approval for dangerous operations with diff previews.
   """

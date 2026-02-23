@@ -1,9 +1,9 @@
-defmodule Quicksilver.Agentic.Tools.ListFiles do
+defmodule Quicksilver.Tools.ListFiles do
   @moduledoc """
   Tool for listing files in a directory with optional glob patterns.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   @impl true
   def name, do: "list_files"

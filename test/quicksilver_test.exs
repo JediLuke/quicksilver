@@ -6,18 +6,16 @@ defmodule QuicksilverTest do
     assert function_exported?(Quicksilver, :chat, 1)
   end
 
-  test "new_conversation convenience is available" do
-    assert function_exported?(Quicksilver, :new_conversation, 0)
-    assert function_exported?(Quicksilver, :new_conversation, 1)
+  test "new_context convenience is available" do
+    assert function_exported?(Quicksilver, :new_context, 0)
+    assert function_exported?(Quicksilver, :new_context, 1)
   end
 
-  test "agentic facade delegates" do
-    assert function_exported?(Quicksilver.Agentic, :list_tools, 0)
-    assert function_exported?(Quicksilver.Agentic, :register_tool, 1)
-    assert function_exported?(Quicksilver.Agentic, :execute_tool, 2)
-    assert function_exported?(Quicksilver.Agentic, :execute_tool, 3)
-    assert function_exported?(Quicksilver.Agentic, :new_conversation, 0)
-    assert function_exported?(Quicksilver.Agentic, :new_conversation, 1)
+  test "top-level facade delegates" do
+    assert function_exported?(Quicksilver, :list_tools, 0)
+    assert function_exported?(Quicksilver, :register_tool, 1)
+    assert function_exported?(Quicksilver, :execute_tool, 2)
+    assert function_exported?(Quicksilver, :execute_tool, 3)
   end
 
   test "llm engine facade delegates" do
@@ -28,7 +26,7 @@ defmodule QuicksilverTest do
   end
 
   test "tools are registered on startup" do
-    tools = Quicksilver.Agentic.Tools.list_tools()
+    tools = Quicksilver.Tools.list_tools()
     assert length(tools) > 0
 
     tool_names = Enum.map(tools, & &1.name)
@@ -42,94 +40,90 @@ defmodule QuicksilverTest do
   end
 end
 
-defmodule Quicksilver.ConversationTest do
+defmodule Quicksilver.ContextTest do
   use ExUnit.Case
 
-  alias Quicksilver.Conversation
+  alias Quicksilver.Context
 
   describe "new/1" do
-    test "creates a bare conversation with defaults" do
-      conv = Conversation.new()
+    test "creates a bare context with defaults" do
+      ctx = Context.new()
 
-      assert conv.history == []
-      assert conv.system_prompt == nil
-      assert conv.tools == :none
-      assert conv.backend_module == Quicksilver.LlmEngine.Backends.LlamaCpp
-      assert conv.backend_pid == Quicksilver.LlmEngine.Backends.LlamaCpp
-      assert conv.workspace_root == nil
-      assert conv.max_iterations == 50
-      assert conv.per_iteration_timeout == 300_000
-      assert conv.approval_policy == nil
+      assert ctx.history == []
+      assert ctx.system_prompt == nil
+      assert ctx.tools == :none
+      assert ctx.backend == :llama_cpp
+      assert ctx.backend_state == %{}
+      assert ctx.workspace_root == nil
+      assert ctx.max_iterations == 50
+      assert ctx.per_iteration_timeout == 300_000
+      assert ctx.approve == nil
     end
 
-    test "creates a conversation with system prompt" do
-      conv = Conversation.new(system_prompt: "You are helpful.")
+    test "creates a context with system prompt" do
+      ctx = Context.new(system_prompt: "You are helpful.")
 
-      assert conv.system_prompt == "You are helpful."
-      assert conv.tools == :none
+      assert ctx.system_prompt == "You are helpful."
+      assert ctx.tools == :none
     end
 
-    test "creates a tool-calling conversation" do
-      conv = Conversation.new(tools: :all, workspace_root: "/tmp")
+    test "creates a tool-calling context" do
+      ctx = Context.new(tools: :all, workspace_root: "/tmp")
 
-      assert conv.tools == :all
-      assert conv.workspace_root == "/tmp"
+      assert ctx.tools == :all
+      assert ctx.workspace_root == "/tmp"
     end
 
-    test "creates a conversation with selective tools" do
-      conv = Conversation.new(tools: ["read_file", "search_files"])
+    test "creates a context with selective tools" do
+      ctx = Context.new(tools: ["read_file", "search_files"])
 
-      assert conv.tools == ["read_file", "search_files"]
+      assert ctx.tools == ["read_file", "search_files"]
     end
 
-    test "accepts custom backend configuration" do
-      conv = Conversation.new(
-        backend_module: SomeBackend,
-        backend_pid: :my_backend
-      )
+    test "accepts custom backend" do
+      ctx = Context.new(backend: :openai)
 
-      assert conv.backend_module == SomeBackend
-      assert conv.backend_pid == :my_backend
+      assert ctx.backend == :openai
     end
 
     test "accepts initial history" do
       history = [%{role: "user", content: "hi"}, %{role: "assistant", content: "hello"}]
-      conv = Conversation.new(history: history)
+      ctx = Context.new(history: history)
 
-      assert conv.history == history
+      assert ctx.history == history
     end
 
     test "accepts custom iteration settings" do
-      conv = Conversation.new(max_iterations: 10, per_iteration_timeout: 60_000)
+      ctx = Context.new(max_iterations: 10, per_iteration_timeout: 60_000)
 
-      assert conv.max_iterations == 10
-      assert conv.per_iteration_timeout == 60_000
+      assert ctx.max_iterations == 10
+      assert ctx.per_iteration_timeout == 60_000
     end
   end
 
   describe "history/1" do
-    test "returns empty history for new conversation" do
-      conv = Conversation.new()
-      assert Conversation.history(conv) == []
+    test "returns empty history for new context" do
+      ctx = Context.new()
+      assert Context.history(ctx) == []
     end
 
-    test "returns history from conversation" do
+    test "returns history from context" do
       history = [%{role: "user", content: "hi"}]
-      conv = Conversation.new(history: history)
-      assert Conversation.history(conv) == history
+      ctx = Context.new(history: history)
+      assert Context.history(ctx) == history
     end
   end
 
   describe "clear/1" do
     test "clears history but preserves config" do
-      conv = Conversation.new(
+      ctx = Context.new(
         system_prompt: "Be helpful.",
         tools: :all,
         workspace_root: "/tmp",
         history: [%{role: "user", content: "hi"}]
       )
 
-      cleared = Conversation.clear(conv)
+      cleared = Context.clear(ctx)
 
       assert cleared.history == []
       assert cleared.system_prompt == "Be helpful."
@@ -139,74 +133,63 @@ defmodule Quicksilver.ConversationTest do
   end
 
   describe "send/2 dispatch" do
-    test "bare conversation dispatches to Simple" do
-      # We can verify the dispatch by checking that tools: :none
-      # goes through Simple (which will fail at the backend call,
-      # but the dispatch itself is what we're testing)
-      conv = Conversation.new(
-        backend_module: __MODULE__.MockBackend,
-        backend_pid: self()
-      )
+    test "bare context makes a single LLM call" do
+      ctx = Context.new(backend: __MODULE__.MockBackend)
 
-      assert {:ok, "mock response", updated} = Conversation.send(conv, "hello")
-      assert length(Conversation.history(updated)) == 2
+      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
+      assert length(Context.history(updated)) == 2
 
-      [user_msg, assistant_msg] = Conversation.history(updated)
+      [user_msg, assistant_msg] = Context.history(updated)
       assert user_msg.role == "user"
       assert user_msg.content == "hello"
       assert assistant_msg.role == "assistant"
       assert assistant_msg.content == "mock response"
     end
 
-    test "tool conversation dispatches to ToolCalling" do
-      conv = Conversation.new(
+    test "tool context runs iterative tool loop" do
+      ctx = Context.new(
         tools: :all,
         workspace_root: File.cwd!(),
-        backend_module: __MODULE__.MockBackend,
-        backend_pid: self()
+        backend: __MODULE__.MockBackend
       )
 
-      assert {:ok, "mock response", updated} = Conversation.send(conv, "hello")
-      assert length(Conversation.history(updated)) >= 2
+      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
+      assert length(Context.history(updated)) >= 2
     end
 
-    test "selective tools conversation dispatches to ToolCalling" do
-      conv = Conversation.new(
+    test "selective tools context runs iterative tool loop" do
+      ctx = Context.new(
         tools: ["read_file"],
         workspace_root: File.cwd!(),
-        backend_module: __MODULE__.MockBackend,
-        backend_pid: self()
+        backend: __MODULE__.MockBackend
       )
 
-      assert {:ok, "mock response", updated} = Conversation.send(conv, "hello")
-      assert length(Conversation.history(updated)) >= 2
+      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
+      assert length(Context.history(updated)) >= 2
     end
   end
 
-  describe "multi-turn conversation" do
+  describe "multi-turn context" do
     test "history accumulates across sends" do
-      conv = Conversation.new(
-        backend_module: __MODULE__.MockBackend,
-        backend_pid: self()
-      )
+      ctx = Context.new(backend: __MODULE__.MockBackend)
 
-      {:ok, _, conv} = Conversation.send(conv, "first")
-      assert length(Conversation.history(conv)) == 2
+      {:ok, _, ctx} = Context.send(ctx, "first")
+      assert length(Context.history(ctx)) == 2
 
-      {:ok, _, conv} = Conversation.send(conv, "second")
-      assert length(Conversation.history(conv)) == 4
+      {:ok, _, ctx} = Context.send(ctx, "second")
+      assert length(Context.history(ctx)) == 4
 
-      {:ok, _, conv} = Conversation.send(conv, "third")
-      assert length(Conversation.history(conv)) == 6
+      {:ok, _, ctx} = Context.send(ctx, "third")
+      assert length(Context.history(ctx)) == 6
     end
   end
 
-  # Mock backend that returns a simple text response
+  # Mock backend that returns a simple text response (new pidless API)
   defmodule MockBackend do
-    def complete(_pid, _messages, _opts) do
+    def complete(_messages, _opts) do
       {:ok, "mock response"}
     end
 
-    def health_check(_pid), do: :ok
+    def health_check(_opts), do: :ok
   end
 end

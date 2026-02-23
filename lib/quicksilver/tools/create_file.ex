@@ -1,9 +1,9 @@
-defmodule Quicksilver.Agentic.Tools.CreateFile do
+defmodule Quicksilver.Tools.CreateFile do
   @moduledoc """
   Tool for creating new files with specified content.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   require Logger
 
@@ -59,13 +59,8 @@ defmodule Quicksilver.Agentic.Tools.CreateFile do
   end
 
   defp request_approval_if_needed(path, content, context) do
-    policy = Map.get(context, :approval_policy, Quicksilver.Agentic.Approval.Policy.default())
-
-    if Quicksilver.Agentic.Approval.Policy.should_request_approval?(policy, "create_file", %{path: path}) do
-      Quicksilver.Agentic.Approval.Interactive.request_approval(:file_create, %{path: path, content: content})
-    else
-      :approved
-    end
+    approve_fn = Map.get(context, :approve, fn _, _ -> :approved end)
+    approve_fn.(:file_create, %{path: path, content: content})
   end
 
   defp resolve_path(path, workspace_root) do

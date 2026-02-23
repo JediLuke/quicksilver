@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Approval.Policy do
+defmodule Quicksilver.Approval.Policy do
   @moduledoc """
   Configurable approval policies for dangerous operations.
   """

@@ -1,11 +1,11 @@
-defmodule Quicksilver.Agentic.Tools.GetRepositoryContext do
+defmodule Quicksilver.Tools.GetRepositoryContext do
   @moduledoc """
   Tool for getting repository context map based on a task description.
   Uses PageRank-based entity scoring to provide relevant codebase context.
   """
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
-  alias Quicksilver.Agentic.RepositoryMap
+  alias Quicksilver.Tools.RepositoryMap
 
   @impl true
   def name, do: "get_repository_context"

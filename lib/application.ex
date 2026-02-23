@@ -12,8 +12,8 @@ defmodule Quicksilver.Application do
       Quicksilver.LlmEngine.Backends.LlamaCpp,
 
       # Agentic — tools registry and cache (agents are stateless, no process needed)
-      Quicksilver.Agentic.Tools.Registry,
-      Quicksilver.Agentic.RepositoryMap.Cache.Server
+      Quicksilver.Tools.Registry,
+      Quicksilver.Tools.RepositoryMap.Cache.Server
     ]
 
     opts = [strategy: :one_for_one, name: Quicksilver.Supervisor]
@@ -22,8 +22,8 @@ defmodule Quicksilver.Application do
 
     # Always register tools on startup — they're backend-independent
     if match?({:ok, _}, result) do
-      Quicksilver.Agentic.Tools.register_default_tools()
-      Logger.info("#{length(Quicksilver.Agentic.Tools.list_tools())} tools registered")
+      Quicksilver.Tools.register_default_tools()
+      Logger.info("#{length(Quicksilver.Tools.list_tools())} tools registered")
     end
 
     result

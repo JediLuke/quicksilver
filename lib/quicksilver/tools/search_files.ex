@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools.SearchFiles do
+defmodule Quicksilver.Tools.SearchFiles do
   @moduledoc """
   Tool for searching file contents in the workspace.
 
@@ -6,7 +6,7 @@ defmodule Quicksilver.Agentic.Tools.SearchFiles do
   Results are limited to avoid overwhelming the context window.
   """
 
-  @behaviour Quicksilver.Agentic.Tools.Behaviour
+  @behaviour Quicksilver.Tools.Behaviour
 
   require Logger
 

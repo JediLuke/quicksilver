@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Graph.Ranker do
+defmodule Quicksilver.Tools.RepositoryMap.Graph.Ranker do
   @moduledoc """
   PageRank implementation for entity importance scoring.
   Assigns scores to entities based on their position in the call graph.

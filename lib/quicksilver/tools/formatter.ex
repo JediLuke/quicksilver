@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools.Formatter do
+defmodule Quicksilver.Tools.Formatter do
   @moduledoc """
   Formats tool information for LLM prompts and parses tool calls from LLM responses.
 

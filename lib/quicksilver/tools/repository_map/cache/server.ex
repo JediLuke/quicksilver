@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Cache.Server do
+defmodule Quicksilver.Tools.RepositoryMap.Cache.Server do
   @moduledoc """
   GenServer for caching repository maps with ETS backend.
   Provides fast concurrent reads and automatic invalidation.

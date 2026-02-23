@@ -1,9 +1,9 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Parser.RepositoryParser do
+defmodule Quicksilver.Tools.RepositoryMap.Parser.RepositoryParser do
   @moduledoc """
   Parses entire repository into entities using concurrent processing.
   """
   require Logger
-  alias Quicksilver.Agentic.RepositoryMap.Parser.{Entity, ElixirParser}
+  alias Quicksilver.Tools.RepositoryMap.Parser.{Entity, ElixirParser}
 
   @type parse_result :: %{
           entities: %{String.t() => Entity.t()},

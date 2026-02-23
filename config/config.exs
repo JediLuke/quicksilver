@@ -14,5 +14,13 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
   # Useful when switching models or managing the server manually
   auto_start: true
 
+config :quicksilver, Quicksilver.LlmEngine.Backends.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: "gpt-4o"
+
+config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  model: "claude-sonnet-4-6"
+
 # Import environment specific config
 # import_config "#{config_env()}.exs"

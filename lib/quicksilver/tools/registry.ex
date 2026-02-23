@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.Tools.Registry do
+defmodule Quicksilver.Tools.Registry do
   @moduledoc """
   GenServer that maintains a registry of available tools and handles tool execution.
 
@@ -83,7 +83,7 @@ defmodule Quicksilver.Agentic.Tools.Registry do
       Logger.debug("Registered tool: #{tool_name}")
       {:reply, {:ok, tool_name}, new_state}
     else
-      {:reply, {:error, "Module does not implement Quicksilver.Agentic.Tools.Behaviour"}, state}
+      {:reply, {:error, "Module does not implement Quicksilver.Tools.Behaviour"}, state}
     end
   end
 
@@ -140,7 +140,7 @@ defmodule Quicksilver.Agentic.Tools.Registry do
 
   defp implements_behaviour?(module) do
     behaviours = module.module_info(:attributes)[:behaviour] || []
-    Quicksilver.Agentic.Tools.Behaviour in behaviours
+    Quicksilver.Tools.Behaviour in behaviours
   rescue
     _e -> false
   end

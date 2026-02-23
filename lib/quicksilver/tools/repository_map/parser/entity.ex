@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Parser.Entity do
+defmodule Quicksilver.Tools.RepositoryMap.Parser.Entity do
   @moduledoc """
   Entity representation for code elements (modules, functions, macros, etc.)
   """

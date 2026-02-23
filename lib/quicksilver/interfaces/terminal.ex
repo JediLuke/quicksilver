@@ -1,28 +1,35 @@
-defmodule Quicksilver.Agentic.Interfaces.Terminal do
+defmodule Quicksilver.Interfaces.Terminal do
   @moduledoc """
   Simple terminal chat interface for Quicksilver.
 
-  Uses a `Quicksilver.Conversation` struct to manage the conversation thread.
+  Uses a `Quicksilver.Context` struct to manage the conversation thread.
   """
 
-  alias Quicksilver.Conversation
-  alias Quicksilver.LlmEngine.Backends.LlamaCpp
+  alias Quicksilver.Context
 
   defmodule State do
-    defstruct [:conversation]
+    defstruct [:context]
   end
 
   def start(opts \\ []) do
-    case LlamaCpp.health_check(LlamaCpp) do
+    backend = Keyword.get(opts, :backend, :llama_cpp)
+
+    case Quicksilver.LlmEngine.health_check(backend: backend) do
       :ok ->
-        conv = Conversation.new(
-          tools: :all,
-          workspace_root: File.cwd!(),
-          history: Keyword.get(opts, :history, [])
+        ctx = Context.new(
+          tools: Keyword.get(opts, :tools, :all),
+          backend: backend,
+          backend_state: Keyword.get(opts, :backend_state, %{}),
+          workspace_root: Keyword.get(opts, :workspace_root, File.cwd!()),
+          system_prompt: Keyword.get(opts, :system_prompt),
+          history: Keyword.get(opts, :history, []),
+          max_iterations: Keyword.get(opts, :max_iterations, 50),
+          per_iteration_timeout: Keyword.get(opts, :per_iteration_timeout, 300_000),
+          approve: Keyword.get(opts, :approve, &Quicksilver.Approval.Interactive.request_approval/2)
         )
 
-        state = %State{conversation: conv}
-        print_welcome()
+        state = %State{context: ctx}
+        print_welcome(ctx)
         loop(state)
 
       {:error, :not_ready} ->
@@ -47,16 +54,20 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
     end
   end
 
-  defp print_welcome do
-    tools = Quicksilver.Agentic.Tools.list_tools()
-    tool_count = length(tools)
+  defp print_welcome(ctx) do
+    tools_info = case ctx.tools do
+      :none -> "none"
+      :all -> "#{length(Quicksilver.Tools.list_tools())} (all)"
+      list when is_list(list) -> "#{length(list)} (#{Enum.join(list, ", ")})"
+    end
 
     IO.puts("""
 
     Quicksilver - Terminal Chat
     ===========================
 
-    Tools Available: #{tool_count}
+    Backend: #{ctx.backend}
+    Tools: #{tools_info}
 
     Type 'help' for commands, 'exit' to quit, or just chat!
 
@@ -82,10 +93,10 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
 
       {:command, :clear} ->
         IO.puts("\n--- History cleared ---\n")
-        loop(%{state | conversation: Conversation.clear(state.conversation)})
+        loop(%{state | context: Context.clear(state.context)})
 
       {:command, :history} ->
-        show_history(Conversation.history(state.conversation))
+        show_history(Context.history(state.context))
         loop(state)
 
       {:command, :tools} ->
@@ -116,8 +127,8 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
     -------------------
     help                - Show this help
     exit/quit           - Exit chat
-    clear               - Clear conversation history
-    history             - Show conversation history
+    clear               - Clear context history
+    history             - Show context history
     tools               - Show available tools
 
     Multi-line input:
@@ -132,7 +143,7 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
   end
 
   defp show_tools do
-    tools = Quicksilver.Agentic.Tools.list_tools()
+    tools = Quicksilver.Tools.list_tools()
 
     IO.puts("\nAvailable Tools (#{length(tools)}):")
     IO.puts(String.duplicate("-", 60))
@@ -146,11 +157,11 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
   end
 
   defp show_history([]) do
-    IO.puts("\n--- No conversation history ---\n")
+    IO.puts("\n--- No history ---\n")
   end
 
   defp show_history(history) do
-    IO.puts("\n--- Conversation History ---")
+    IO.puts("\n--- History ---")
     Enum.each(history, fn
       %{role: "user", content: content} ->
         IO.puts("you> #{content}")
@@ -165,12 +176,12 @@ defmodule Quicksilver.Agentic.Interfaces.Terminal do
   defp handle_message(text, state) do
     IO.write("Agent> ")
 
-    case Conversation.send(state.conversation, text) do
-      {:ok, response, updated_conv} ->
+    case Context.send(state.context, text) do
+      {:ok, response, updated_ctx} ->
         response = String.trim(response)
         IO.puts(response)
         IO.puts("")
-        %{state | conversation: updated_conv}
+        %{state | context: updated_ctx}
 
       {:error, :not_ready} ->
         IO.puts("""

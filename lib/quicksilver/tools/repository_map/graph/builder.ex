@@ -1,4 +1,4 @@
-defmodule Quicksilver.Agentic.RepositoryMap.Graph.Builder do
+defmodule Quicksilver.Tools.RepositoryMap.Graph.Builder do
   @moduledoc """
   Builds call/dependency graph from parsed entities.
   """
