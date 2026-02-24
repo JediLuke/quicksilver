@@ -136,7 +136,7 @@ defmodule Quicksilver.Context do
 
     tool_context = %{
       workspace_root: ctx.workspace_root || File.cwd!(),
-      approve: ctx.approve || fn _type, _details -> :approved end
+      approve: ctx.approve
     }
 
     Logger.info("Sending message: #{String.slice(message, 0..100)}...")

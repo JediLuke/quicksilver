@@ -112,8 +112,7 @@ defmodule Quicksilver.Tools.EditFile do
   end
 
   defp request_approval_if_needed(path, diff, context) do
-    approve_fn = Map.get(context, :approve, fn _, _ -> :approved end)
-    approve_fn.(:file_edit, %{path: path, diff: diff})
+    Quicksilver.Tools.Behaviour.request_approval(context, :file_edit, %{path: path, diff: diff})
   end
 
   defp create_backup(path) do
