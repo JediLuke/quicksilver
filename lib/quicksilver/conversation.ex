@@ -122,11 +122,11 @@ defmodule Quicksilver.Conversation do
         {:ok, response, %{ctx | history: updated_history, backend_state: new_backend_state}}
 
       {:ok, {:error, reason}} ->
-        Logger.error("Backend error: #{reason}")
+        Logger.error("[#{ctx.backend}] Backend error: #{reason}")
         {:error, "Backend error: #{reason}"}
 
       nil ->
-        Logger.error("LLM call timed out after #{ctx.per_iteration_timeout}ms")
+        Logger.error("[#{ctx.backend}] LLM call timed out after #{ctx.per_iteration_timeout}ms")
         {:error, "LLM call timed out"}
     end
   end
@@ -139,7 +139,7 @@ defmodule Quicksilver.Conversation do
       approve: ctx.approve
     }
 
-    Logger.info("Sending message: #{String.slice(message, 0..100)}...")
+    Logger.info("[#{ctx.backend}] Sending message: #{String.slice(message, 0..100)}...")
 
     case iterate(ctx, history, tool_context, ctx.max_iterations, 1) do
       {:ok, response, updated_history, new_backend_state} ->
@@ -171,7 +171,7 @@ defmodule Quicksilver.Conversation do
   end
 
   defp iterate(ctx, history, tool_context, iterations_left, iteration) do
-    Logger.debug("Iteration #{iteration}, remaining: #{iterations_left}")
+    Logger.debug("[#{ctx.backend}] Iteration #{iteration}, remaining: #{iterations_left}")
 
     tools = get_available_tools(ctx.tools)
     prompt = build_tool_prompt(tools, history)
@@ -184,14 +184,14 @@ defmodule Quicksilver.Conversation do
     case Task.yield(task, ctx.per_iteration_timeout) || Task.shutdown(task) do
       {:ok, {:ok, response, new_backend_state}} ->
         ctx = %{ctx | backend_state: new_backend_state}
-        Logger.debug("LLM response: #{String.slice(response, 0..200)}...")
+        Logger.debug("[#{ctx.backend}] Response: #{String.slice(response, 0..200)}...")
 
         case Formatter.parse_tool_call(response) do
           {:tool_call, tool_name, args} ->
             handle_tool_call(ctx, tool_name, args, history, tool_context, iterations_left, iteration)
 
           {:text_response, text} ->
-            Logger.info("Completed after #{iteration} iteration(s)")
+            Logger.info("[#{ctx.backend}] Completed after #{iteration} iteration(s)")
             final_history = history ++ [%{role: "assistant", content: text}]
             {:ok, text, final_history, ctx.backend_state}
 
@@ -201,11 +201,11 @@ defmodule Quicksilver.Conversation do
         end
 
       {:ok, {:error, reason}} ->
-        Logger.error("Backend error: #{reason}")
+        Logger.error("[#{ctx.backend}] Backend error: #{reason}")
         {:error, "Backend error: #{reason}"}
 
       nil ->
-        Logger.error("LLM call timed out after #{ctx.per_iteration_timeout}ms")
+        Logger.error("[#{ctx.backend}] LLM call timed out after #{ctx.per_iteration_timeout}ms")
         {:error, "LLM call timed out"}
     end
   end
