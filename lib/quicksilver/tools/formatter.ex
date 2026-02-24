@@ -7,8 +7,6 @@ defmodule Quicksilver.Tools.Formatter do
   models might produce.
   """
 
-  require Logger
-
   @doc """
   Build a system prompt that includes available tools.
 

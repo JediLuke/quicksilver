@@ -1,43 +1,42 @@
 # Quicksilver
 
-Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling capabilities, powered by local LLMs (llama.cpp).
+Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling capabilities, powered by multiple LLM backends.
 
 ## Project Overview
 
 **Location**: `/home/luke/workbench/quicksilver`
 **Language**: Elixir 1.14+
-**Primary Backend**: llama.cpp via HTTP API
+**Backends**: llama.cpp (local), OpenAI API, Anthropic API, Claude CLI
 
 ### Core Capabilities
 
-- **Conversation Threads**: Ephemeral, struct-based conversation management with message history
+- **Context Threads**: Ephemeral, struct-based conversation management with message history
 - **Tool-Calling Loop**: Optional iterative reasoning with up to 50 iterations per send (5-minute per-iteration timeout)
 - **Tool System**: Modular tools for file operations, code search, and repository analysis
 - **Repository Map**: PageRank-based code analysis for context-aware responses
-- **Approval System**: Interactive user approval for destructive operations (file writes/edits)
+- **Approval System**: Callback-based approval for destructive operations (injected by caller)
 
 ## Architecture
 
-Quicksilver is organized into three layers:
+Quicksilver is organized into two layers:
 
-1. **Conversation** (`lib/conversation/`) — ephemeral conversation threads (struct, not process)
-2. **Agentic** (`lib/agentic/`) — tools, approval, repository map, and interfaces
-3. **LLM Engine** (`lib/llm_engine/`) — standalone local LLM server management
+1. **Context** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, interfaces
+2. **LLM Engine** (`lib/llm_engine/`) — backend-agnostic LLM completions with multiple providers
 
 ```
 Layer Above (future agent libraries)
   - Goals, directives, persistence
-  - Owns one or more Conversations
+  - Owns one or more Contexts
           |
           v
-Quicksilver.Conversation (struct)
+Quicksilver.Context (struct)
   - Ephemeral message thread
   - Optional tool-calling loop
           |
           v
 Quicksilver.LlmEngine
   - Backend-agnostic completions
-  - Server lifecycle management
+  - Multiple providers
 ```
 
 ### Supervision Tree
@@ -45,31 +44,31 @@ Quicksilver.LlmEngine
 ```elixir
 Quicksilver.Application
 ├── Quicksilver.LlmEngine.Backends.LlamaCpp (GenServer)
-├── Quicksilver.Agentic.Tools.Registry (GenServer)
-└── Quicksilver.Agentic.RepositoryMap.Cache.Server (GenServer)
+├── Quicksilver.Tools.Registry (GenServer)
+└── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Conversations are structs — no supervised processes needed.
+Contexts are structs — no supervised processes needed.
 
 ## Key Components
 
-### 1. Conversation (lib/conversation/)
+### 1. Context (lib/quicksilver/context.ex)
 
-The primary abstraction. A `%Quicksilver.Conversation{}` struct tracking message history and configuration.
+The primary abstraction. A `%Quicksilver.Context{}` struct tracking message history and configuration.
 
-Two send strategies:
-- **Simple** (`simple.ex`): One LLM call, no tool parsing. For bare chats.
-- **ToolCalling** (`tool_calling.ex`): Iterative loop until text response. For tool-calling conversations.
+Send behaviour is determined by the `tools` field:
+- `tools: :none` — single LLM call, no tool parsing (bare chat)
+- `tools: :all` or `tools: [list]` — iterative tool-calling loop until text response
 
 **Key Functions**:
-- `Conversation.new/1` - Create with options (system_prompt, tools, backend, etc.)
-- `Conversation.send/2` - Send message, get response + updated conversation
-- `Conversation.history/1` - Return message list
-- `Conversation.clear/1` - Clear history, keep config
+- `Context.new/1` - Create with options (system_prompt, tools, backend, etc.)
+- `Context.send/2` - Send message, get response + updated context
+- `Context.history/1` - Return message list
+- `Context.clear/1` - Clear history, keep config
 
 ### 2. Tool System
 
-#### Tool Behaviour (lib/agentic/tools/behaviour.ex)
+#### Tool Behaviour (lib/quicksilver/tools/behaviour.ex)
 ```elixir
 @callback name() :: String.t()
 @callback description() :: String.t()
@@ -79,7 +78,7 @@ Two send strategies:
 
 #### Available Tools
 
-**Read-Only (auto-approved)**:
+**Read-Only**:
 | Tool | Purpose | Parameters |
 |------|---------|------------|
 | `read_file` | Read file contents (max 100KB) | `path` |
@@ -94,54 +93,59 @@ Two send strategies:
 | `create_file` | Create new files | `path`, `content` |
 | `edit_file` | Edit via exact string replacement | `path`, `old_string`, `new_string` |
 
-### 3. Approval System (lib/agentic/approval/)
+### 3. Approval System
 
+Approval is a callback function on the Context struct:
 ```elixir
-%Quicksilver.Agentic.Approval.Policy{
-  mode: :manual | :auto | :readonly,
-  auto_approve_list: ["read_file", "search_files", "list_files"],
-  max_auto_size: 1000,
-  whitelist_patterns: [],
-  blacklist_patterns: ["**/.git/**", "**/node_modules/**"]
-}
+approve: fn(action_type, details) -> :approved | :rejected | :quit_session
 ```
 
-### 4. LlamaCpp Backend (lib/llm_engine/backends/llama_cpp.ex)
+- When `nil`, all operations are auto-approved (programmatic use)
+- Terminal injects `Quicksilver.Interfaces.Interactive.request_approval/2` for IO-based approval
+- Write tools call the `approve` callback from their execution context
 
-GenServer managing llama.cpp server lifecycle:
-- `complete/3` - HTTP POST to `/completion` endpoint
-- `health_check/1` - GET `/health`
+### 4. LLM Backends
 
-### 5. Terminal Interface (lib/agentic/interfaces/terminal.ex)
+| Key | Module | Type |
+|-----|--------|------|
+| `:llama_cpp` | `Quicksilver.LlmEngine.Backends.LlamaCpp` | Local llama.cpp (GenServer) |
+| `:openai` | `Quicksilver.LlmEngine.Backends.OpenAI` | OpenAI API (stateless) |
+| `:anthropic` | `Quicksilver.LlmEngine.Backends.Anthropic` | Anthropic API (stateless) |
+| `:claude_cli` | `Quicksilver.LlmEngine.Backends.ClaudeCli` | Claude CLI headless (stateful) |
 
-Interactive chat using `%Conversation{}` internally. Commands: `help`, `tools`, `history`, `clear`, `exit`/`quit`.
+The LlmEngine facade resolves atom keys to modules. Unknown atoms are treated as module names directly (useful for testing with mock backends).
+
+### 5. Terminal Interface (lib/quicksilver/interfaces/terminal.ex)
+
+Interactive chat using `%Context{}` internally. Passes all options through to `Context.new/1`. Commands: `help`, `tools`, `history`, `clear`, `exit`/`quit`.
 
 ## Public API
 
 ```elixir
-# Conversations
-conv = Quicksilver.new_conversation(opts)
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, message)
-Quicksilver.Conversation.history(conv)
-Quicksilver.Conversation.clear(conv)
+# Contexts
+ctx = Quicksilver.Context.new(opts)
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, message)
+Quicksilver.Context.history(ctx)
+Quicksilver.Context.clear(ctx)
 
 # Terminal
 Quicksilver.chat()
+Quicksilver.chat(backend: :openai, tools: :none)
 
 # LLM Engine
-Quicksilver.LlmEngine.complete(messages, opts)
-Quicksilver.LlmEngine.health_check()
+Quicksilver.LlmEngine.complete(messages, backend: :openai)
+Quicksilver.LlmEngine.health_check(backend: :llama_cpp)
 
 # Tools
-Quicksilver.Agentic.list_tools()
-Quicksilver.Agentic.register_tool(module)
-Quicksilver.Agentic.execute_tool(name, args, context)
-
+Quicksilver.list_tools()
+Quicksilver.register_tool(module)
+Quicksilver.execute_tool(name, args, context)
 ```
 
 ## Configuration (config/config.exs)
 
 ```elixir
+# Local LlamaCpp
 config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
   server_path: "/path/to/llama-server",
   model_path: "/path/to/models/",
@@ -151,6 +155,16 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
   ctx_size: 8192,
   gpu_layers: 99,
   auto_start: true
+
+# OpenAI
+config :quicksilver, Quicksilver.LlmEngine.Backends.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: "gpt-4o"
+
+# Anthropic
+config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  model: "claude-sonnet-4-6"
 ```
 
 ## Running

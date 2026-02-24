@@ -1,6 +1,9 @@
-defmodule Quicksilver.Approval.Interactive do
+defmodule Quicksilver.Interfaces.Interactive do
   @moduledoc """
-  Interactive approval for dangerous operations with diff previews.
+  IO-based interactive approval for destructive operations.
+
+  Shows diffs and prompts the user for approval via terminal IO.
+  Injected as the `approve` callback by `Quicksilver.Interfaces.Terminal`.
   """
 
   @doc """

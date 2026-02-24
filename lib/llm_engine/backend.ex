@@ -11,7 +11,6 @@ defmodule Quicksilver.LlmEngine.Backend do
   @type options :: keyword()
 
   @callback complete(messages :: [message], options) :: {:ok, String.t()} | {:error, term}
-  @callback stream(messages :: [message], options) :: {:ok, Enumerable.t()} | {:error, term}
   @callback health_check(options) :: :ok | {:error, term}
 
   @doc """
@@ -21,5 +20,5 @@ defmodule Quicksilver.LlmEngine.Backend do
   @callback complete_with_state(messages :: [message], state :: map(), options) ::
               {:ok, String.t(), map()} | {:error, term}
 
-  @optional_callbacks [complete_with_state: 3, stream: 2]
+  @optional_callbacks [complete_with_state: 3]
 end

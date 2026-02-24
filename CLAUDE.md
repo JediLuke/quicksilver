@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling, organized into two layers:
 
-1. **Context** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, approval, repository map, interfaces
+1. **Context** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, interfaces
 2. **LLM Engine** (`lib/llm_engine/`) — backend-agnostic LLM completions with multiple providers
 
 The Context is the primary abstraction. A bare chat with no tools and a sophisticated tool-calling loop are architecturally the same thing — a `%Quicksilver.Context{}` struct tracking message history and configuration.
@@ -84,7 +84,7 @@ The Formatter (`lib/quicksilver/tools/formatter.ex`) converts tools to LLM promp
 Approval is handled via a callback function on the Context struct:
 - `approve: fn(action_type, details) -> :approved | :rejected | :quit_session`
 - When `nil`, all operations are auto-approved (programmatic use)
-- Terminal injects `Quicksilver.Approval.Interactive.request_approval/2` for IO-based approval
+- Terminal injects `Quicksilver.Interfaces.Interactive.request_approval/2` for IO-based approval
 - Write tools call the `approve` function from the execution context
 
 **4. Backend Abstraction**
@@ -151,11 +151,9 @@ lib/
 │   │       ├── formatter/llm.ex
 │   │       ├── graph/builder.ex, ranker.ex
 │   │       └── parser/entity.ex, elixir_parser.ex, repository_parser.ex
-│   ├── approval/
-│   │   ├── policy.ex                           # Pure data (no IO)
-│   │   └── interactive.ex                      # IO-based approval (injected by Terminal)
 │   └── interfaces/
-│       └── terminal.ex                         # Terminal chat (injects IO-based approval)
+│       ├── terminal.ex                         # Terminal chat (injects IO-based approval)
+│       └── interactive.ex                      # IO-based approval UI (diff display, prompts)
 │
 └── llm_engine/                                 # LLM backends
     ├── llm_engine.ex                           # Facade with backend resolution

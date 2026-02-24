@@ -25,7 +25,7 @@ defmodule Quicksilver.Interfaces.Terminal do
           history: Keyword.get(opts, :history, []),
           max_iterations: Keyword.get(opts, :max_iterations, 50),
           per_iteration_timeout: Keyword.get(opts, :per_iteration_timeout, 300_000),
-          approve: Keyword.get(opts, :approve, &Quicksilver.Approval.Interactive.request_approval/2)
+          approve: Keyword.get(opts, :approve, &Quicksilver.Interfaces.Interactive.request_approval/2)
         )
 
         state = %State{context: ctx}

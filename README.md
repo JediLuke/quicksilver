@@ -1,42 +1,46 @@
 # Quicksilver
 
-Quicksilver – Ephemeral LLM Conversation Threads for Elixir
+Ephemeral LLM conversation threads for Elixir.
 
-Quicksilver provides ephemeral, tool-capable conversation threads powered by local LLMs. The simplest conversation is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
+Quicksilver provides ephemeral, tool-capable conversation threads powered by multiple LLM backends. The simplest context is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
 
-- Create ephemeral conversation threads with optional tool-calling
-- Plug into any LLM backend (currently llama.cpp, extensible via behaviour)
-- Use modular tools for file operations, code search, and repository analysis
-- Harness Elixir's concurrency for parallel code parsing and PageRank analysis
-- Stay in control — run powerful open models on your own GPU
+- Create ephemeral conversation contexts with optional tool-calling
+- Multiple backends: local llama.cpp, OpenAI, Anthropic, Claude CLI
+- Modular tools for file operations, code search, and repository analysis
+- Elixir concurrency for parallel code parsing and PageRank analysis
 
 ## Quick Start
 
-### Conversations
+### Contexts
 
 ```elixir
 # Bare chat — no tools, no system prompt
-conv = Quicksilver.new_conversation()
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Hello!")
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Tell me more")
+ctx = Quicksilver.Context.new()
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Tell me more")
+
+# Different backends
+ctx = Quicksilver.Context.new(backend: :openai)
+ctx = Quicksilver.Context.new(backend: :anthropic)
+ctx = Quicksilver.Context.new(backend: :claude_cli)
 
 # Chat with a system prompt
-conv = Quicksilver.new_conversation(system_prompt: "You are an Elixir expert.")
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, "What is GenServer?")
+ctx = Quicksilver.Context.new(system_prompt: "You are an Elixir expert.")
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, "What is GenServer?")
 
-# Tool-calling conversation (iterative reasoning loop)
-conv = Quicksilver.new_conversation(
+# Tool-calling context (iterative reasoning loop)
+ctx = Quicksilver.Context.new(
   tools: :all,
   workspace_root: File.cwd!()
 )
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, "Read mix.exs")
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Read mix.exs")
 
 # Selective tools
-conv = Quicksilver.new_conversation(tools: ["read_file", "search_files"])
+ctx = Quicksilver.Context.new(tools: ["read_file", "search_files"])
 
 # History management
-Quicksilver.Conversation.history(conv)  # => [%{role: "user", ...}, ...]
-conv = Quicksilver.Conversation.clear(conv)  # clear history, keep config
+Quicksilver.Context.history(ctx)   # => [%{role: "user", ...}, ...]
+ctx = Quicksilver.Context.clear(ctx)  # clear history, keep config
 ```
 
 ### Terminal Chat Interface
@@ -49,21 +53,20 @@ Or from IEx:
 ```elixir
 iex -S mix
 iex> Quicksilver.chat()
+iex> Quicksilver.chat(backend: :openai, tools: :none)
 ```
 
 Commands: `tools`, `help`, `history`, `clear`, `exit`
 
 ## Architecture
 
-Quicksilver is organized into three layers:
-
 ```
 Layer Above (your code)
   - Goals, directives, persistence
-  - Owns one or more Conversations
+  - Owns one or more Contexts
           |
           v
-Quicksilver.Conversation (struct, not process)
+Quicksilver.Context (struct, not process)
   - Ephemeral message thread
   - Optional tool-calling loop
   - No persistence, no goals
@@ -71,7 +74,7 @@ Quicksilver.Conversation (struct, not process)
           v
 Quicksilver.LlmEngine
   - Backend-agnostic completions
-  - Server lifecycle management
+  - Multiple providers
 ```
 
 | Concern | Quicksilver | Layer Above |
@@ -79,7 +82,7 @@ Quicksilver.LlmEngine
 | LLM calls | Yes | No (uses Quicksilver) |
 | Message history | In-memory, ephemeral | Persists to disk/DB |
 | Tool execution | Yes | Registers custom tools |
-| Conversation threads | Creates and manages | Owns one or more |
+| Context threads | Creates and manages | Owns one or more |
 | Goals / directives | No | Yes |
 | Long-term memory | No | Yes |
 
@@ -88,15 +91,24 @@ Quicksilver.LlmEngine
 ```elixir
 Quicksilver.Application
 ├── Quicksilver.LlmEngine.Backends.LlamaCpp (GenServer)
-├── Quicksilver.Agentic.Tools.Registry (GenServer)
-└── Quicksilver.Agentic.RepositoryMap.Cache.Server (GenServer)
+├── Quicksilver.Tools.Registry (GenServer)
+└── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Conversations are structs — no processes, no supervision needed.
+Contexts are structs — no processes, no supervision needed.
+
+## Backends
+
+| Key | Module | Type |
+|-----|--------|------|
+| `:llama_cpp` | `Quicksilver.LlmEngine.Backends.LlamaCpp` | Local llama.cpp (GenServer) |
+| `:openai` | `Quicksilver.LlmEngine.Backends.OpenAI` | OpenAI API (stateless) |
+| `:anthropic` | `Quicksilver.LlmEngine.Backends.Anthropic` | Anthropic API (stateless) |
+| `:claude_cli` | `Quicksilver.LlmEngine.Backends.ClaudeCli` | Claude CLI headless (stateful) |
 
 ## Tools
 
-**Read-only (auto-approved):**
+**Read-only:**
 - `read_file` - Read any file in the workspace
 - `search_files` - Search the codebase with ripgrep/grep
 - `list_files` - List files with glob patterns
@@ -106,12 +118,12 @@ Conversations are structs — no processes, no supervision needed.
 **Write (require approval):**
 - `create_file` / `edit_file` - Create and edit files
 
-## Adding New Tools
+### Adding New Tools
 
-1. Implement `Quicksilver.Agentic.Tools.Behaviour`:
+1. Implement `Quicksilver.Tools.Behaviour`:
    ```elixir
-   defmodule Quicksilver.Agentic.Tools.MyTool do
-     @behaviour Quicksilver.Agentic.Tools.Behaviour
+   defmodule Quicksilver.Tools.MyTool do
+     @behaviour Quicksilver.Tools.Behaviour
 
      def name, do: "my_tool"
      def description, do: "Does something useful"
@@ -120,13 +132,14 @@ Conversations are structs — no processes, no supervision needed.
    end
    ```
 
-2. Register in `lib/agentic/tools.ex` `register_default_tools/0`
+2. Register in `lib/quicksilver/tools/tools.ex` `register_default_tools/0`
 
 ## Configuration
 
-See `config/config.exs` for llama.cpp server settings:
-
 ```elixir
+# config/config.exs
+
+# Local LlamaCpp
 config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
   server_path: "/path/to/llama-server",
   model_path: "/path/to/models/",
@@ -136,37 +149,39 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
   ctx_size: 8192,
   gpu_layers: 99,
   auto_start: true
-```
 
-### Backend Management
+# OpenAI
+config :quicksilver, Quicksilver.LlmEngine.Backends.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: "gpt-4o"
 
-```elixir
-Quicksilver.LlmEngine.Backends.LlamaCpp.start_standalone()
-Quicksilver.LlmEngine.Backends.LlamaCpp.server_running?()
-Quicksilver.LlmEngine.health_check()
-Quicksilver.LlmEngine.Backends.LlamaCpp.stop_standalone()
+# Anthropic
+config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  model: "claude-sonnet-4-6"
 ```
 
 ## API Reference
 
 ```elixir
-# Conversations
-conv = Quicksilver.new_conversation(opts)
-{:ok, response, conv} = Quicksilver.Conversation.send(conv, message)
-Quicksilver.Conversation.history(conv)
-Quicksilver.Conversation.clear(conv)
+# Contexts
+ctx = Quicksilver.Context.new(opts)
+{:ok, response, ctx} = Quicksilver.Context.send(ctx, message)
+Quicksilver.Context.history(ctx)
+Quicksilver.Context.clear(ctx)
 
 # Terminal
 Quicksilver.chat()
+Quicksilver.chat(backend: :openai, tools: :none)
 
 # LLM Engine
-Quicksilver.LlmEngine.complete(messages, opts)
-Quicksilver.LlmEngine.health_check()
+Quicksilver.LlmEngine.complete(messages, backend: :openai)
+Quicksilver.LlmEngine.health_check(backend: :llama_cpp)
 
 # Tools
-Quicksilver.Agentic.list_tools()
-Quicksilver.Agentic.register_tool(module)
-Quicksilver.Agentic.execute_tool(name, args, context)
+Quicksilver.list_tools()
+Quicksilver.register_tool(module)
+Quicksilver.execute_tool(name, args, context)
 ```
 
 ## Testing
@@ -181,4 +196,4 @@ mix test
 
 **No tool calls happening** - Check debug logs to see LLM output, try more explicit requests
 
-**Agent gives wrong answers** - Try `clear` command to reset history, rephrase your question
+**Wrong answers** - Try `clear` command to reset history, rephrase your question
