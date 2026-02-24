@@ -4,18 +4,55 @@ defmodule Quicksilver do
 
   ## Quick Start
 
+      # One-shot question (no conversation state)
+      {:ok, answer} = Quicksilver.ask("What is 2 + 2?")
+
       # Bare chat
-      ctx = Quicksilver.new_conversation()
-      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
+      conv = Quicksilver.new_conversation()
+      {:ok, response, conv} = Quicksilver.Conversation.send(conv, "Hello!")
 
       # Tool-calling conversation
-      ctx = Quicksilver.new_conversation(tools: :all, workspace_root: ".")
-      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Read mix.exs")
+      conv = Quicksilver.new_conversation(tools: :all, workspace_root: ".")
+      {:ok, response, conv} = Quicksilver.Conversation.send(conv, "Read mix.exs")
 
       # Terminal chat interface
       Quicksilver.chat()
 
   """
+
+  @doc """
+  Check if Quicksilver is available and ready.
+
+  Returns true if the module is loaded. Useful for optional LLM integration
+  where calling code may run with or without Quicksilver.
+  """
+  @spec available?() :: boolean()
+  def available? do
+    Code.ensure_loaded?(__MODULE__) and Code.ensure_loaded?(Quicksilver.Conversation)
+  end
+
+  @doc """
+  One-shot LLM call without maintaining conversation state.
+
+  Good for simple queries where you don't need history.
+  Returns `{:ok, response}` or `{:error, reason}`.
+
+  ## Options
+  Same as `new_conversation/1` - :backend, :system_prompt, etc.
+
+  ## Examples
+
+      {:ok, answer} = Quicksilver.ask("What is the capital of France?")
+      {:ok, answer} = Quicksilver.ask("Explain GenServer", backend: :claude_cli)
+  """
+  @spec ask(String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def ask(message, opts \\ []) do
+    conv = Quicksilver.Conversation.new(opts)
+    case Quicksilver.Conversation.send(conv, message) do
+      {:ok, response, _conv} -> {:ok, response}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   Create a new conversation.
