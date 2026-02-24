@@ -2,45 +2,45 @@
 
 Ephemeral LLM conversation threads for Elixir.
 
-Quicksilver provides ephemeral, tool-capable conversation threads powered by multiple LLM backends. The simplest context is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
+Quicksilver provides ephemeral, tool-capable conversation threads powered by multiple LLM backends. The simplest conversation is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
 
-- Create ephemeral conversation contexts with optional tool-calling
+- Create ephemeral conversations with optional tool-calling
 - Multiple backends: local llama.cpp, OpenAI, Anthropic, Claude CLI
 - Modular tools for file operations, code search, and repository analysis
 - Elixir concurrency for parallel code parsing and PageRank analysis
 
 ## Quick Start
 
-### Contexts
+### Conversations
 
 ```elixir
 # Bare chat — no tools, no system prompt
-ctx = Quicksilver.Context.new()
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Tell me more")
+ctx = Quicksilver.Conversation.new()
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Tell me more")
 
 # Different backends
-ctx = Quicksilver.Context.new(backend: :openai)
-ctx = Quicksilver.Context.new(backend: :anthropic)
-ctx = Quicksilver.Context.new(backend: :claude_cli)
+ctx = Quicksilver.Conversation.new(backend: :openai)
+ctx = Quicksilver.Conversation.new(backend: :anthropic)
+ctx = Quicksilver.Conversation.new(backend: :claude_cli)
 
 # Chat with a system prompt
-ctx = Quicksilver.Context.new(system_prompt: "You are an Elixir expert.")
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "What is GenServer?")
+ctx = Quicksilver.Conversation.new(system_prompt: "You are an Elixir expert.")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "What is GenServer?")
 
-# Tool-calling context (iterative reasoning loop)
-ctx = Quicksilver.Context.new(
+# Tool-calling conversation (iterative reasoning loop)
+ctx = Quicksilver.Conversation.new(
   tools: :all,
   workspace_root: File.cwd!()
 )
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Read mix.exs")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Read mix.exs")
 
 # Selective tools
-ctx = Quicksilver.Context.new(tools: ["read_file", "search_files"])
+ctx = Quicksilver.Conversation.new(tools: ["read_file", "search_files"])
 
 # History management
-Quicksilver.Context.history(ctx)   # => [%{role: "user", ...}, ...]
-ctx = Quicksilver.Context.clear(ctx)  # clear history, keep config
+Quicksilver.Conversation.history(ctx)   # => [%{role: "user", ...}, ...]
+ctx = Quicksilver.Conversation.clear(ctx)  # clear history, keep config
 ```
 
 ### Terminal Chat Interface
@@ -63,10 +63,10 @@ Commands: `tools`, `help`, `history`, `clear`, `exit`
 ```
 Layer Above (your code)
   - Goals, directives, persistence
-  - Owns one or more Contexts
+  - Owns one or more Conversations
           |
           v
-Quicksilver.Context (struct, not process)
+Quicksilver.Conversation (struct, not process)
   - Ephemeral message thread
   - Optional tool-calling loop
   - No persistence, no goals
@@ -82,7 +82,7 @@ Quicksilver.LlmEngine
 | LLM calls | Yes | No (uses Quicksilver) |
 | Message history | In-memory, ephemeral | Persists to disk/DB |
 | Tool execution | Yes | Registers custom tools |
-| Context threads | Creates and manages | Owns one or more |
+| Conversation threads | Creates and manages | Owns one or more |
 | Goals / directives | No | Yes |
 | Long-term memory | No | Yes |
 
@@ -95,7 +95,7 @@ Quicksilver.Application
 └── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Contexts are structs — no processes, no supervision needed.
+Conversations are structs — no processes, no supervision needed.
 
 ## Backends
 
@@ -164,11 +164,11 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
 ## API Reference
 
 ```elixir
-# Contexts
-ctx = Quicksilver.Context.new(opts)
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, message)
-Quicksilver.Context.history(ctx)
-Quicksilver.Context.clear(ctx)
+# Conversations
+ctx = Quicksilver.Conversation.new(opts)
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, message)
+Quicksilver.Conversation.history(ctx)
+Quicksilver.Conversation.clear(ctx)
 
 # Terminal
 Quicksilver.chat()

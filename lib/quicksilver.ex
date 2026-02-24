@@ -5,12 +5,12 @@ defmodule Quicksilver do
   ## Quick Start
 
       # Bare chat
-      ctx = Quicksilver.new_context()
-      {:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
+      ctx = Quicksilver.new_conversation()
+      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
 
-      # Tool-calling context
-      ctx = Quicksilver.new_context(tools: :all, workspace_root: ".")
-      {:ok, response, ctx} = Quicksilver.Context.send(ctx, "Read mix.exs")
+      # Tool-calling conversation
+      ctx = Quicksilver.new_conversation(tools: :all, workspace_root: ".")
+      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Read mix.exs")
 
       # Terminal chat interface
       Quicksilver.chat()
@@ -18,11 +18,11 @@ defmodule Quicksilver do
   """
 
   @doc """
-  Create a new context.
+  Create a new conversation.
 
-  See `Quicksilver.Context.new/1` for options.
+  See `Quicksilver.Conversation.new/1` for options.
   """
-  defdelegate new_context(opts \\ []), to: Quicksilver.Context, as: :new
+  defdelegate new_conversation(opts \\ []), to: Quicksilver.Conversation, as: :new
 
   @doc """
   Start the terminal chat interface.

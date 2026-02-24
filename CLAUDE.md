@@ -6,18 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling, organized into two layers:
 
-1. **Context** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, interfaces
+1. **Conversation** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, approval, repository map, interfaces
 2. **LLM Engine** (`lib/llm_engine/`) — backend-agnostic LLM completions with multiple providers
 
-The Context is the primary abstraction. A bare chat with no tools and a sophisticated tool-calling loop are architecturally the same thing — a `%Quicksilver.Context{}` struct tracking message history and configuration.
+The Conversation is the primary abstraction. A bare chat with no tools and a sophisticated tool-calling loop are architecturally the same thing — a `%Quicksilver.Conversation{}` struct tracking message history and configuration.
 
 ```
 Layer Above (future "agent" libraries)
   - Goals, directives, persistence, long memory
-  - Owns one or more Quicksilver Contexts
+  - Owns one or more Quicksilver Conversations
                     |
                     v
-Quicksilver.Context
+Quicksilver.Conversation
   - Ephemeral message thread (struct, not process)
   - Optional tool-calling loop
   - Optional system prompt & context
@@ -50,13 +50,13 @@ Quicksilver.Supervisor (strategy: :one_for_one)
 └── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Contexts are **structs, not processes** — the caller owns the struct and manages its lifecycle.
+Conversations are **structs, not processes** — the caller owns the struct and manages its lifecycle.
 
 ### Key Design Patterns
 
-**1. Context as Primary Abstraction**
+**1. Conversation as Primary Abstraction**
 
-The `%Quicksilver.Context{}` struct tracks:
+The `%Quicksilver.Conversation{}` struct tracks:
 - Message history (accumulated back-and-forth)
 - Configuration (backend, tools, system prompt, timeouts)
 - Backend state (for stateful backends like Claude CLI)
@@ -81,9 +81,9 @@ The Formatter (`lib/quicksilver/tools/formatter.ex`) converts tools to LLM promp
 
 **3. Approval System for Destructive Operations**
 
-Approval is handled via a callback function on the Context struct:
+Approval is handled via a callback function on the Conversation struct:
 - `approve: fn(action_type, details) -> :approved | :rejected | :quit_session`
-- When `nil`, all operations are auto-approved (programmatic use)
+- When `nil`, destructive operations are rejected by default (safe by default)
 - Terminal injects `Quicksilver.Interfaces.Interactive.request_approval/2` for IO-based approval
 - Write tools call the `approve` function from the execution context
 
@@ -105,19 +105,19 @@ Unknown atoms are treated as module names directly (useful for testing with mock
 ## Public API
 
 ```elixir
-# Create contexts
-ctx = Quicksilver.Context.new()                                    # bare chat (llama_cpp)
-ctx = Quicksilver.Context.new(backend: :openai)                    # OpenAI
-ctx = Quicksilver.Context.new(backend: :claude_cli, tools: :all)   # Claude CLI + tools
-ctx = Quicksilver.Context.new(system_prompt: "You are an expert.") # system prompt
+# Create conversations
+ctx = Quicksilver.Conversation.new()                                    # bare chat (llama_cpp)
+ctx = Quicksilver.Conversation.new(backend: :openai)                    # OpenAI
+ctx = Quicksilver.Conversation.new(backend: :claude_cli, tools: :all)   # Claude CLI + tools
+ctx = Quicksilver.Conversation.new(system_prompt: "You are an expert.") # system prompt
 
 # Send messages
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, "Tell me more")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Tell me more")
 
 # History
-Quicksilver.Context.history(ctx)
-ctx = Quicksilver.Context.clear(ctx)
+Quicksilver.Conversation.history(ctx)
+ctx = Quicksilver.Conversation.clear(ctx)
 
 # Terminal chat with options
 Quicksilver.chat(backend: :openai, tools: :none)
@@ -136,7 +136,7 @@ lib/
 ├── application.ex                              # Supervision tree
 │
 ├── quicksilver/
-│   ├── context.ex                              # Primary abstraction (struct + API + send logic)
+│   ├── conversation.ex                         # Primary abstraction (struct + API + send logic)
 │   ├── tools/                                  # Tool system
 │   │   ├── behaviour.ex
 │   │   ├── registry.ex
@@ -165,7 +165,7 @@ lib/
         └── claude_cli.ex                       # Claude CLI headless (stateful)
 ```
 
-## Context Struct
+## Conversation Struct
 
 ```elixir
 defstruct [
@@ -240,7 +240,7 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
 
 ## Key Behaviours to Maintain
 
-**Context is a struct** — no GenServer, no process, no supervision. The caller owns the struct.
+**Conversation is a struct** — no GenServer, no process, no supervision. The caller owns the struct.
 
 **Tool Uniqueness Validation**: The `edit_file` tool requires `old_string` to appear exactly once in the file.
 
@@ -263,6 +263,6 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
 
 1. **Config returns keyword list** - `Application.get_env(:quicksilver, Module)` returns a keyword list, convert with `Map.new/1` before using with `Map.merge/2`
 2. **Tool registration timing** - Tools must be registered after supervision tree starts
-3. **Context is a struct** — no GenServer state; the caller (terminal, test harness, higher-level agent) manages the `%Context{}` struct
+3. **Conversation is a struct** — no GenServer state; the caller (terminal, test harness, higher-level agent) manages the `%Conversation{}` struct
 4. **Approval is injected** - Write tools call `context.approve` callback, not Interactive directly. Terminal injects the IO-based callback; tests/programmatic use pass `nil` (auto-approve)
 5. **Backend resolution** — atom keys (`:openai`, `:anthropic`) are resolved by `LlmEngine.resolve_backend/1`. Unknown atoms are treated as module names directly.

@@ -6,9 +6,9 @@ defmodule QuicksilverTest do
     assert function_exported?(Quicksilver, :chat, 1)
   end
 
-  test "new_context convenience is available" do
-    assert function_exported?(Quicksilver, :new_context, 0)
-    assert function_exported?(Quicksilver, :new_context, 1)
+  test "new_conversation convenience is available" do
+    assert function_exported?(Quicksilver, :new_conversation, 0)
+    assert function_exported?(Quicksilver, :new_conversation, 1)
   end
 
   test "top-level facade delegates" do
@@ -40,14 +40,14 @@ defmodule QuicksilverTest do
   end
 end
 
-defmodule Quicksilver.ContextTest do
+defmodule Quicksilver.ConversationTest do
   use ExUnit.Case
 
-  alias Quicksilver.Context
+  alias Quicksilver.Conversation
 
   describe "new/1" do
-    test "creates a bare context with defaults" do
-      ctx = Context.new()
+    test "creates a bare conversation with defaults" do
+      ctx = Conversation.new()
 
       assert ctx.history == []
       assert ctx.system_prompt == nil
@@ -60,41 +60,41 @@ defmodule Quicksilver.ContextTest do
       assert ctx.approve == nil
     end
 
-    test "creates a context with system prompt" do
-      ctx = Context.new(system_prompt: "You are helpful.")
+    test "creates a conversation with system prompt" do
+      ctx = Conversation.new(system_prompt: "You are helpful.")
 
       assert ctx.system_prompt == "You are helpful."
       assert ctx.tools == :none
     end
 
-    test "creates a tool-calling context" do
-      ctx = Context.new(tools: :all, workspace_root: "/tmp")
+    test "creates a tool-calling conversation" do
+      ctx = Conversation.new(tools: :all, workspace_root: "/tmp")
 
       assert ctx.tools == :all
       assert ctx.workspace_root == "/tmp"
     end
 
-    test "creates a context with selective tools" do
-      ctx = Context.new(tools: ["read_file", "search_files"])
+    test "creates a conversation with selective tools" do
+      ctx = Conversation.new(tools: ["read_file", "search_files"])
 
       assert ctx.tools == ["read_file", "search_files"]
     end
 
     test "accepts custom backend" do
-      ctx = Context.new(backend: :openai)
+      ctx = Conversation.new(backend: :openai)
 
       assert ctx.backend == :openai
     end
 
     test "accepts initial history" do
       history = [%{role: "user", content: "hi"}, %{role: "assistant", content: "hello"}]
-      ctx = Context.new(history: history)
+      ctx = Conversation.new(history: history)
 
       assert ctx.history == history
     end
 
     test "accepts custom iteration settings" do
-      ctx = Context.new(max_iterations: 10, per_iteration_timeout: 60_000)
+      ctx = Conversation.new(max_iterations: 10, per_iteration_timeout: 60_000)
 
       assert ctx.max_iterations == 10
       assert ctx.per_iteration_timeout == 60_000
@@ -102,28 +102,28 @@ defmodule Quicksilver.ContextTest do
   end
 
   describe "history/1" do
-    test "returns empty history for new context" do
-      ctx = Context.new()
-      assert Context.history(ctx) == []
+    test "returns empty history for new conversation" do
+      ctx = Conversation.new()
+      assert Conversation.history(ctx) == []
     end
 
-    test "returns history from context" do
+    test "returns history from conversation" do
       history = [%{role: "user", content: "hi"}]
-      ctx = Context.new(history: history)
-      assert Context.history(ctx) == history
+      ctx = Conversation.new(history: history)
+      assert Conversation.history(ctx) == history
     end
   end
 
   describe "clear/1" do
     test "clears history but preserves config" do
-      ctx = Context.new(
+      ctx = Conversation.new(
         system_prompt: "Be helpful.",
         tools: :all,
         workspace_root: "/tmp",
         history: [%{role: "user", content: "hi"}]
       )
 
-      cleared = Context.clear(ctx)
+      cleared = Conversation.clear(ctx)
 
       assert cleared.history == []
       assert cleared.system_prompt == "Be helpful."
@@ -133,54 +133,54 @@ defmodule Quicksilver.ContextTest do
   end
 
   describe "send/2 dispatch" do
-    test "bare context makes a single LLM call" do
-      ctx = Context.new(backend: __MODULE__.MockBackend)
+    test "bare conversation makes a single LLM call" do
+      ctx = Conversation.new(backend: __MODULE__.MockBackend)
 
-      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
-      assert length(Context.history(updated)) == 2
+      assert {:ok, "mock response", updated} = Conversation.send(ctx, "hello")
+      assert length(Conversation.history(updated)) == 2
 
-      [user_msg, assistant_msg] = Context.history(updated)
+      [user_msg, assistant_msg] = Conversation.history(updated)
       assert user_msg.role == "user"
       assert user_msg.content == "hello"
       assert assistant_msg.role == "assistant"
       assert assistant_msg.content == "mock response"
     end
 
-    test "tool context runs iterative tool loop" do
-      ctx = Context.new(
+    test "tool conversation runs iterative tool loop" do
+      ctx = Conversation.new(
         tools: :all,
         workspace_root: File.cwd!(),
         backend: __MODULE__.MockBackend
       )
 
-      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
-      assert length(Context.history(updated)) >= 2
+      assert {:ok, "mock response", updated} = Conversation.send(ctx, "hello")
+      assert length(Conversation.history(updated)) >= 2
     end
 
-    test "selective tools context runs iterative tool loop" do
-      ctx = Context.new(
+    test "selective tools conversation runs iterative tool loop" do
+      ctx = Conversation.new(
         tools: ["read_file"],
         workspace_root: File.cwd!(),
         backend: __MODULE__.MockBackend
       )
 
-      assert {:ok, "mock response", updated} = Context.send(ctx, "hello")
-      assert length(Context.history(updated)) >= 2
+      assert {:ok, "mock response", updated} = Conversation.send(ctx, "hello")
+      assert length(Conversation.history(updated)) >= 2
     end
   end
 
-  describe "multi-turn context" do
+  describe "multi-turn conversation" do
     test "history accumulates across sends" do
-      ctx = Context.new(backend: __MODULE__.MockBackend)
+      ctx = Conversation.new(backend: __MODULE__.MockBackend)
 
-      {:ok, _, ctx} = Context.send(ctx, "first")
-      assert length(Context.history(ctx)) == 2
+      {:ok, _, ctx} = Conversation.send(ctx, "first")
+      assert length(Conversation.history(ctx)) == 2
 
-      {:ok, _, ctx} = Context.send(ctx, "second")
-      assert length(Context.history(ctx)) == 4
+      {:ok, _, ctx} = Conversation.send(ctx, "second")
+      assert length(Conversation.history(ctx)) == 4
 
-      {:ok, _, ctx} = Context.send(ctx, "third")
-      assert length(Context.history(ctx)) == 6
+      {:ok, _, ctx} = Conversation.send(ctx, "third")
+      assert length(Conversation.history(ctx)) == 6
     end
   end
 

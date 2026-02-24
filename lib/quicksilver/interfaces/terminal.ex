@@ -2,10 +2,10 @@ defmodule Quicksilver.Interfaces.Terminal do
   @moduledoc """
   Simple terminal chat interface for Quicksilver.
 
-  Uses a `Quicksilver.Context` struct to manage the conversation thread.
+  Uses a `Quicksilver.Conversation` struct to manage the conversation thread.
   """
 
-  alias Quicksilver.Context
+  alias Quicksilver.Conversation
 
   defmodule State do
     defstruct [:context]
@@ -16,7 +16,7 @@ defmodule Quicksilver.Interfaces.Terminal do
 
     case Quicksilver.LlmEngine.health_check(backend: backend) do
       :ok ->
-        ctx = Context.new(
+        ctx = Conversation.new(
           tools: Keyword.get(opts, :tools, :all),
           backend: backend,
           backend_state: Keyword.get(opts, :backend_state, %{}),
@@ -93,10 +93,10 @@ defmodule Quicksilver.Interfaces.Terminal do
 
       {:command, :clear} ->
         IO.puts("\n--- History cleared ---\n")
-        loop(%{state | context: Context.clear(state.context)})
+        loop(%{state | context: Conversation.clear(state.context)})
 
       {:command, :history} ->
-        show_history(Context.history(state.context))
+        show_history(Conversation.history(state.context))
         loop(state)
 
       {:command, :tools} ->
@@ -127,8 +127,8 @@ defmodule Quicksilver.Interfaces.Terminal do
     -------------------
     help                - Show this help
     exit/quit           - Exit chat
-    clear               - Clear context history
-    history             - Show context history
+    clear               - Clear conversation history
+    history             - Show conversation history
     tools               - Show available tools
 
     Multi-line input:
@@ -176,7 +176,7 @@ defmodule Quicksilver.Interfaces.Terminal do
   defp handle_message(text, state) do
     IO.write("Agent> ")
 
-    case Context.send(state.context, text) do
+    case Conversation.send(state.context, text) do
       {:ok, response, updated_ctx} ->
         response = String.trim(response)
         IO.puts(response)

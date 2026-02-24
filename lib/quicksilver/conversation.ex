@@ -1,10 +1,10 @@
-defmodule Quicksilver.Context do
+defmodule Quicksilver.Conversation do
   @moduledoc """
   The accumulated state for an LLM interaction.
 
-  A Context is a data structure (not a process) that tracks message history
-  and configuration. The simplest context is a bare chat: no tools, no system
-  prompt. Send a message, get a response, history grows. A tool-calling context
+  A Conversation is a data structure (not a process) that tracks message history
+  and configuration. The simplest conversation is a bare chat: no tools, no system
+  prompt. Send a message, get a response, history grows. A tool-calling conversation
   adds an iterative tool-execution loop before producing a final answer.
 
   The difference between a bare chat and a tool-calling session is just struct
@@ -12,27 +12,27 @@ defmodule Quicksilver.Context do
 
   Quicksilver provides ephemeral conversation threads, not agents. Real agents —
   things with goals, directives, persistence — belong in a layer above Quicksilver.
-  Each such agent might own one or more Quicksilver contexts.
+  Each such agent might own one or more Quicksilver conversations.
 
   ## Examples
 
       # Bare chat
-      ctx = Quicksilver.Context.new()
-      {:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
+      ctx = Quicksilver.Conversation.new()
+      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
 
       # OpenAI backend
-      ctx = Quicksilver.Context.new(backend: :openai)
-      {:ok, response, ctx} = Quicksilver.Context.send(ctx, "Hello!")
+      ctx = Quicksilver.Conversation.new(backend: :openai)
+      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
 
-      # Tool-calling context
-      ctx = Quicksilver.Context.new(
+      # Tool-calling conversation
+      ctx = Quicksilver.Conversation.new(
         tools: :all,
         workspace_root: File.cwd!()
       )
-      {:ok, response, ctx} = Quicksilver.Context.send(ctx, "Read mix.exs")
+      {:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Read mix.exs")
 
       # Selective tools
-      ctx = Quicksilver.Context.new(
+      ctx = Quicksilver.Conversation.new(
         tools: ["read_file", "search_files", "list_files"]
       )
 
@@ -67,7 +67,7 @@ defmodule Quicksilver.Context do
         }
 
   @doc """
-  Create a new context.
+  Create a new conversation.
 
   ## Options
 
@@ -99,11 +99,11 @@ defmodule Quicksilver.Context do
   @doc """
   Send a message and get a response.
 
-  For bare contexts (tools: :none), makes a single LLM call.
-  For tool-calling contexts, runs an iterative loop until the LLM
+  For bare conversations (tools: :none), makes a single LLM call.
+  For tool-calling conversations, runs an iterative loop until the LLM
   produces a final text response.
 
-  Returns `{:ok, response, updated_context}` or `{:error, reason}`.
+  Returns `{:ok, response, updated_conversation}` or `{:error, reason}`.
   """
   @spec send(t(), String.t()) :: {:ok, String.t(), t()} | {:error, String.t()}
   def send(%__MODULE__{tools: :none} = ctx, message) do

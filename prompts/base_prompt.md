@@ -10,7 +10,7 @@ Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads
 
 ### Core Capabilities
 
-- **Context Threads**: Ephemeral, struct-based conversation management with message history
+- **Conversation Threads**: Ephemeral, struct-based conversation management with message history
 - **Tool-Calling Loop**: Optional iterative reasoning with up to 50 iterations per send (5-minute per-iteration timeout)
 - **Tool System**: Modular tools for file operations, code search, and repository analysis
 - **Repository Map**: PageRank-based code analysis for context-aware responses
@@ -20,16 +20,16 @@ Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads
 
 Quicksilver is organized into two layers:
 
-1. **Context** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, interfaces
+1. **Conversation** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, interfaces
 2. **LLM Engine** (`lib/llm_engine/`) — backend-agnostic LLM completions with multiple providers
 
 ```
 Layer Above (future agent libraries)
   - Goals, directives, persistence
-  - Owns one or more Contexts
+  - Owns one or more Conversations
           |
           v
-Quicksilver.Context (struct)
+Quicksilver.Conversation (struct)
   - Ephemeral message thread
   - Optional tool-calling loop
           |
@@ -48,23 +48,23 @@ Quicksilver.Application
 └── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
 ```
 
-Contexts are structs — no supervised processes needed.
+Conversations are structs — no supervised processes needed.
 
 ## Key Components
 
-### 1. Context (lib/quicksilver/context.ex)
+### 1. Conversation (lib/quicksilver/conversation.ex)
 
-The primary abstraction. A `%Quicksilver.Context{}` struct tracking message history and configuration.
+The primary abstraction. A `%Quicksilver.Conversation{}` struct tracking message history and configuration.
 
 Send behaviour is determined by the `tools` field:
 - `tools: :none` — single LLM call, no tool parsing (bare chat)
 - `tools: :all` or `tools: [list]` — iterative tool-calling loop until text response
 
 **Key Functions**:
-- `Context.new/1` - Create with options (system_prompt, tools, backend, etc.)
-- `Context.send/2` - Send message, get response + updated context
-- `Context.history/1` - Return message list
-- `Context.clear/1` - Clear history, keep config
+- `Conversation.new/1` - Create with options (system_prompt, tools, backend, etc.)
+- `Conversation.send/2` - Send message, get response + updated conversation
+- `Conversation.history/1` - Return message list
+- `Conversation.clear/1` - Clear history, keep config
 
 ### 2. Tool System
 
@@ -95,7 +95,7 @@ Send behaviour is determined by the `tools` field:
 
 ### 3. Approval System
 
-Approval is a callback function on the Context struct:
+Approval is a callback function on the Conversation struct:
 ```elixir
 approve: fn(action_type, details) -> :approved | :rejected | :quit_session
 ```
@@ -117,16 +117,16 @@ The LlmEngine facade resolves atom keys to modules. Unknown atoms are treated as
 
 ### 5. Terminal Interface (lib/quicksilver/interfaces/terminal.ex)
 
-Interactive chat using `%Context{}` internally. Passes all options through to `Context.new/1`. Commands: `help`, `tools`, `history`, `clear`, `exit`/`quit`.
+Interactive chat using `%Conversation{}` internally. Passes all options through to `Conversation.new/1`. Commands: `help`, `tools`, `history`, `clear`, `exit`/`quit`.
 
 ## Public API
 
 ```elixir
-# Contexts
-ctx = Quicksilver.Context.new(opts)
-{:ok, response, ctx} = Quicksilver.Context.send(ctx, message)
-Quicksilver.Context.history(ctx)
-Quicksilver.Context.clear(ctx)
+# Conversations
+ctx = Quicksilver.Conversation.new(opts)
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, message)
+Quicksilver.Conversation.history(ctx)
+Quicksilver.Conversation.clear(ctx)
 
 # Terminal
 Quicksilver.chat()
