@@ -23,4 +23,4 @@ config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
   model: "claude-sonnet-4-6"
 
 # Import environment specific config
-# import_config "#{config_env()}.exs"
+import_config "#{config_env()}.exs"
