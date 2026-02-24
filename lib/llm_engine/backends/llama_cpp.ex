@@ -19,12 +19,39 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
 
   @default_config %{
     port: 8080,
+    threads: 16,
+    ctx_size: 8192,
+    gpu_layers: 99,
     auto_start: false
   }
+
+  @required_keys [:server_path, :model_path, :model_file]
 
   def start_link do
     config = Application.get_env(:quicksilver, __MODULE__) || []
     config = @default_config |> Map.merge(Map.new(config))
+
+    # Validate required config when auto_start is enabled
+    if config.auto_start do
+      missing = Enum.filter(@required_keys, fn key -> !Map.has_key?(config, key) end)
+
+      if missing != [] do
+        raise """
+        Missing required LlamaCpp config keys: #{inspect(missing)}
+
+        Add this to your config/dev.exs:
+
+            config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
+              server_path: "/path/to/llama.cpp/build/bin/llama-server",
+              model_path: "/path/to/models",
+              model_file: "your-model.gguf",
+              auto_start: true
+
+        Or set auto_start: false to disable the LlamaCpp backend.
+        """
+      end
+    end
+
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
 
@@ -67,6 +94,16 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
   """
   def initialize do
     GenServer.call(__MODULE__, :initialize, 120_000)
+  end
+
+  @doc """
+  Restart the backend - force shutdown any running server and reinitialize.
+  """
+  def restart do
+    Logger.info("Restarting LlamaCpp backend...")
+    _ = force_shutdown_server()
+    Process.sleep(1000)
+    initialize()
   end
 
   @doc """
