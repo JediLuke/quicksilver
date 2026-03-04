@@ -17,7 +17,7 @@ defmodule Quicksilver.Interfaces.Terminal do
     case Quicksilver.LlmEngine.health_check(backend: backend) do
       :ok ->
         ctx = Conversation.new(
-          tools: Keyword.get(opts, :tools, :all),
+          tools: Keyword.get(opts, :tools),
           backend: backend,
           backend_state: Keyword.get(opts, :backend_state, %{}),
           workspace_root: Keyword.get(opts, :workspace_root, File.cwd!()),

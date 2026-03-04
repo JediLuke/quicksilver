@@ -8,6 +8,9 @@ defmodule Quicksilver.Application do
     :erlang.process_flag(:trap_exit, true)
 
     children = [
+      # Session reaper — tracks and cleans up headless claude processes
+      Quicksilver.SessionReaper,
+
       # LLM Engine — always starts, zero agentic dependencies
       Quicksilver.LlmEngine.Backends.LlamaCpp,
 

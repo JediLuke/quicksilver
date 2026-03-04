@@ -50,7 +50,9 @@ defmodule Quicksilver.Conversation do
             workspace_root: nil,
             max_iterations: 50,
             per_iteration_timeout: 300_000,
-            approve: nil
+            approve: nil,
+            stream_callback: nil,
+            pending_images: []
 
   @type approve_fn :: (atom(), map() -> :approved | :rejected | :quit_session) | nil
 
@@ -63,7 +65,9 @@ defmodule Quicksilver.Conversation do
           workspace_root: String.t() | nil,
           max_iterations: pos_integer(),
           per_iteration_timeout: pos_integer(),
-          approve: approve_fn()
+          approve: approve_fn(),
+          stream_callback: (map() -> any()) | nil,
+          pending_images: [map()]
         }
 
   @doc """
@@ -92,7 +96,8 @@ defmodule Quicksilver.Conversation do
       workspace_root: Keyword.get(opts, :workspace_root),
       max_iterations: Keyword.get(opts, :max_iterations, 50),
       per_iteration_timeout: Keyword.get(opts, :per_iteration_timeout, 300_000),
-      approve: Keyword.get(opts, :approve)
+      approve: Keyword.get(opts, :approve),
+      stream_callback: Keyword.get(opts, :stream_callback)
     }
   end
 
@@ -111,8 +116,13 @@ defmodule Quicksilver.Conversation do
     prompt = Formatter.simple_prompt(ctx.system_prompt, history)
     messages = [%{role: "user", content: prompt}]
 
+    llm_opts = [backend: ctx.backend]
+    llm_opts = if ctx.stream_callback,
+      do: Keyword.put(llm_opts, :stream_callback, ctx.stream_callback),
+      else: llm_opts
+
     task = Task.async(fn ->
-      Quicksilver.LlmEngine.complete_with_state(messages, ctx.backend_state, backend: ctx.backend)
+      Quicksilver.LlmEngine.complete_with_state(messages, ctx.backend_state, llm_opts)
     end)
 
     case Task.yield(task, ctx.per_iteration_timeout) || Task.shutdown(task) do
@@ -122,8 +132,8 @@ defmodule Quicksilver.Conversation do
         {:ok, response, %{ctx | history: updated_history, backend_state: new_backend_state}}
 
       {:ok, {:error, reason}} ->
-        Logger.error("[#{ctx.backend}] Backend error: #{reason}")
-        {:error, "Backend error: #{reason}"}
+        Logger.error("[#{ctx.backend}] Backend error: #{inspect(reason)}")
+        {:error, "Backend error: #{inspect(reason)}"}
 
       nil ->
         Logger.error("[#{ctx.backend}] LLM call timed out after #{ctx.per_iteration_timeout}ms")
@@ -141,7 +151,7 @@ defmodule Quicksilver.Conversation do
 
     Logger.info("[#{ctx.backend}] Sending message: #{String.slice(message, 0..100)}...")
 
-    case iterate(ctx, history, tool_context, ctx.max_iterations, 1) do
+    case iterate(ctx, history, tool_context, ctx.max_iterations, 1, []) do
       {:ok, response, updated_history, new_backend_state} ->
         {:ok, response, %{ctx | history: updated_history, backend_state: new_backend_state}}
 
@@ -164,21 +174,26 @@ defmodule Quicksilver.Conversation do
 
   ## Tool loop internals
 
-  defp iterate(_ctx, _history, _tool_context, 0, _iteration) do
+  defp iterate(_ctx, _history, _tool_context, 0, _iteration, _recent_calls) do
     error_msg = "Maximum iterations reached without final answer"
     Logger.warning(error_msg)
     {:error, error_msg}
   end
 
-  defp iterate(ctx, history, tool_context, iterations_left, iteration) do
+  defp iterate(ctx, history, tool_context, iterations_left, iteration, recent_calls) do
     Logger.debug("[#{ctx.backend}] Iteration #{iteration}, remaining: #{iterations_left}")
 
     tools = get_available_tools(ctx.tools)
     prompt = build_tool_prompt(tools, history)
-    messages = [%{role: "user", content: prompt}]
+    {messages, ctx} = build_messages_with_images(prompt, ctx)
+
+    llm_opts = [backend: ctx.backend]
+    llm_opts = if ctx.stream_callback,
+      do: Keyword.put(llm_opts, :stream_callback, ctx.stream_callback),
+      else: llm_opts
 
     task = Task.async(fn ->
-      Quicksilver.LlmEngine.complete_with_state(messages, ctx.backend_state, backend: ctx.backend)
+      Quicksilver.LlmEngine.complete_with_state(messages, ctx.backend_state, llm_opts)
     end)
 
     case Task.yield(task, ctx.per_iteration_timeout) || Task.shutdown(task) do
@@ -188,7 +203,7 @@ defmodule Quicksilver.Conversation do
 
         case Formatter.parse_tool_call(response) do
           {:tool_call, tool_name, args} ->
-            handle_tool_call(ctx, tool_name, args, history, tool_context, iterations_left, iteration)
+            handle_tool_call(ctx, tool_name, args, history, tool_context, iterations_left, iteration, recent_calls)
 
           {:text_response, text} ->
             Logger.info("[#{ctx.backend}] Completed after #{iteration} iteration(s)")
@@ -201,8 +216,8 @@ defmodule Quicksilver.Conversation do
         end
 
       {:ok, {:error, reason}} ->
-        Logger.error("[#{ctx.backend}] Backend error: #{reason}")
-        {:error, "Backend error: #{reason}"}
+        Logger.error("[#{ctx.backend}] Backend error: #{inspect(reason)}")
+        {:error, "Backend error: #{inspect(reason)}"}
 
       nil ->
         Logger.error("[#{ctx.backend}] LLM call timed out after #{ctx.per_iteration_timeout}ms")
@@ -210,25 +225,55 @@ defmodule Quicksilver.Conversation do
     end
   end
 
-  defp handle_tool_call(ctx, tool_name, args, history, tool_context, iterations_left, iteration) do
+  @max_duplicate_calls 2
+
+  defp handle_tool_call(ctx, tool_name, args, history, tool_context, iterations_left, iteration, recent_calls) do
     Logger.info("Tool call: #{tool_name} with args: #{inspect(args)}")
 
-    tool_call_msg = "Using tool: #{tool_name}"
-    history = history ++ [%{role: "assistant", content: tool_call_msg}]
+    call_signature = {tool_name, args}
+    duplicate_count = Enum.count(recent_calls, &(&1 == call_signature))
 
-    case Registry.execute_tool(tool_name, args, tool_context) do
-      {:ok, result} ->
-        Logger.debug("Tool succeeded: #{String.slice(result, 0..200)}...")
-        formatted_result = Formatter.format_tool_result(tool_name, result)
-        history = history ++ [%{role: "tool", content: formatted_result}]
-        iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1)
+    if duplicate_count >= @max_duplicate_calls do
+      Logger.warning("Loop detected: #{tool_name} called #{duplicate_count + 1} times with same args, nudging model")
 
-      {:error, reason} ->
-        Logger.warning("Tool failed: #{reason}")
-        formatted_error = Formatter.format_tool_result(tool_name, {:error, reason})
-        history = history ++ [%{role: "tool", content: formatted_error}]
-        iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1)
+      nudge = "SYSTEM: You have already called #{tool_name} with these exact arguments #{duplicate_count + 1} times and gotten the same result. Try a different approach or provide your best answer with the information you have."
+      history = history ++ [%{role: "system", content: nudge}]
+      iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1, [])
+    else
+      tool_call_msg = "Using tool: #{tool_name}"
+      history = history ++ [%{role: "assistant", content: tool_call_msg}]
+      recent_calls = [call_signature | recent_calls] |> Enum.take(10)
+
+      case Registry.execute_tool(tool_name, args, tool_context) do
+        {:ok, {:image, mime, base64, path}} ->
+          Logger.debug("Tool returned image: #{Path.basename(path)}")
+          image_block = %{type: "image_url", image_url: %{url: "data:#{mime};base64,#{base64}"}}
+          ctx = %{ctx | pending_images: ctx.pending_images ++ [image_block]}
+          placeholder = "Tool '#{tool_name}' returned:\n[Image loaded: #{Path.basename(path)}]"
+          history = history ++ [%{role: "tool", content: placeholder}]
+          iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1, recent_calls)
+
+        {:ok, result} ->
+          Logger.debug("Tool succeeded: #{String.slice(result, 0..200)}...")
+          formatted_result = Formatter.format_tool_result(tool_name, result)
+          history = history ++ [%{role: "tool", content: formatted_result}]
+          iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1, recent_calls)
+
+        {:error, reason} ->
+          Logger.warning("Tool failed: #{reason}")
+          formatted_error = Formatter.format_tool_result(tool_name, {:error, reason})
+          history = history ++ [%{role: "tool", content: formatted_error}]
+          iterate(ctx, history, tool_context, iterations_left - 1, iteration + 1, recent_calls)
+      end
     end
+  end
+
+  defp build_messages_with_images(prompt, %{pending_images: []} = ctx),
+    do: {[%{role: "user", content: prompt}], ctx}
+
+  defp build_messages_with_images(prompt, %{pending_images: images} = ctx) do
+    content = [%{type: "text", text: prompt} | images]
+    {[%{role: "user", content: content}], %{ctx | pending_images: []}}
   end
 
   defp build_tool_prompt(tools, history) do

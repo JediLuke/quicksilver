@@ -28,10 +28,10 @@ defmodule Quicksilver.LlmEngine.Backends.OpenAI do
       {:error, :missing_api_key}
     else
       payload = %{
-        model: model,
-        messages: messages,
-        temperature: Keyword.get(options, :temperature, 0.7),
-        max_tokens: Keyword.get(options, :max_tokens, 4096)
+        "model" => model,
+        "messages" => Enum.map(messages, &encode_message/1),
+        "temperature" => Keyword.get(options, :temperature, 0.7),
+        "max_tokens" => Keyword.get(options, :max_tokens, 4096)
       }
 
       headers = [
@@ -76,6 +76,18 @@ defmodule Quicksilver.LlmEngine.Backends.OpenAI do
 
   defp extract_error(%{"error" => %{"message" => msg}}), do: msg
   defp extract_error(body), do: inspect(body)
+
+  defp encode_message(%{role: role, content: content}) when is_binary(content),
+    do: %{"role" => role, "content" => content}
+
+  defp encode_message(%{role: role, content: content}) when is_list(content),
+    do: %{"role" => role, "content" => Enum.map(content, &encode_content_block/1)}
+
+  defp encode_content_block(%{type: "text", text: text}),
+    do: %{"type" => "text", "text" => text}
+
+  defp encode_content_block(%{type: "image_url", image_url: %{url: url}}),
+    do: %{"type" => "image_url", "image_url" => %{"url" => url}}
 
   defp get_config do
     Application.get_env(:quicksilver, __MODULE__) || []

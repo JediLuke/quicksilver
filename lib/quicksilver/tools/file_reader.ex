@@ -11,7 +11,11 @@ defmodule Quicksilver.Tools.FileReader do
   require Logger
 
   @max_file_size 100_000 # 100KB - reasonable limit for context
+  @max_image_size 2_000_000 # 2MB - base64 limit for multimodal
   @truncation_message "\n\n[File truncated - content exceeds #{@max_file_size} bytes]"
+  @image_extensions ~w(.png .jpg .jpeg .gif .webp .bmp)
+  @image_mimes %{".png" => "image/png", ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
+                 ".gif" => "image/gif", ".webp" => "image/webp", ".bmp" => "image/bmp"}
 
   @impl true
   def name, do: "read_file"
@@ -20,7 +24,8 @@ defmodule Quicksilver.Tools.FileReader do
   def description do
     """
     Read the contents of a file from the workspace.
-    Provide the file path relative to the workspace root or as an absolute path.
+    Supports text files and image files (PNG, JPG, GIF, WebP, BMP).
+    Images are loaded for visual analysis. Provide the file path relative to the workspace root or as an absolute path.
     """
   end
 
@@ -46,9 +51,22 @@ defmodule Quicksilver.Tools.FileReader do
     Logger.debug("Reading file: #{full_path}")
 
     case File.read(full_path) do
-      {:ok, content} ->
-        content = maybe_truncate(content)
-        {:ok, content}
+      {:ok, content} when is_binary(content) ->
+        if String.valid?(content) do
+          {:ok, maybe_truncate(content)}
+        else
+          ext = Path.extname(full_path) |> String.downcase()
+          if ext in @image_extensions do
+            if byte_size(content) > @max_image_size do
+              {:ok, "[Image too large: #{Path.basename(full_path)} (#{byte_size(content)} bytes). Max: #{@max_image_size}.]"}
+            else
+              mime = Map.get(@image_mimes, ext, "image/png")
+              {:ok, {:image, mime, Base.encode64(content), full_path}}
+            end
+          else
+            {:error, "Binary file (#{ext}) — cannot read as text."}
+          end
+        end
 
       {:error, :enoent} ->
         {:error, "File not found: #{path}"}

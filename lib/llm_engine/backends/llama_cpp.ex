@@ -57,7 +57,21 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
 
   @impl Quicksilver.LlmEngine.Backend
   def complete(messages, options \\ []) do
-    GenServer.call(__MODULE__, {:complete, messages, options}, 30_000)
+    # Use receive_timeout for LLM processing time (default 2min, streaming gets more)
+    # GenServer.call timeout must be longer to account for HTTP + processing
+    receive_timeout = Keyword.get(options, :timeout, 120_000)
+    call_timeout = if Keyword.has_key?(options, :stream_callback),
+      do: receive_timeout + 30_000,
+      else: receive_timeout + 10_000
+    GenServer.call(__MODULE__, {:complete, messages, options}, call_timeout)
+  end
+
+  @impl Quicksilver.LlmEngine.Backend
+  def complete_with_state(messages, backend_state, options \\ []) do
+    case complete(messages, options) do
+      {:ok, response} -> {:ok, response, backend_state}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @impl Quicksilver.LlmEngine.Backend
@@ -154,12 +168,8 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
           "--n-gpu-layers", to_string(config.gpu_layers || 99)
         ]
 
-        # Add chat template if specified
-        args = if config[:chat_template] do
-          args ++ ["--chat-template", config.chat_template]
-        else
-          args
-        end
+        args = maybe_add_optional_arg(args, config, :mmproj_file, "--mmproj", config.model_path)
+        args = maybe_add_optional_arg(args, config, :chat_template, "--chat-template")
 
         Logger.info("""
         Starting standalone llama.cpp server on port #{config.port}
@@ -445,6 +455,27 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
   end
 
   @impl GenServer
+  def handle_call({:complete, messages, options}, from, state) do
+    if not state.ready do
+      {:reply, {:error, :not_ready}, state}
+    else
+      callback = Keyword.get(options, :stream_callback)
+
+      if callback do
+        # Streaming — run in a Task to avoid blocking GenServer
+        Task.start(fn ->
+          result = do_streaming_complete(messages, options, callback, state)
+          GenServer.reply(from, result)
+        end)
+        {:noreply, state}
+      else
+        result = do_non_streaming_complete(messages, options, state)
+        {:reply, result, state}
+      end
+    end
+  end
+
+  @impl GenServer
   def handle_call(:force_shutdown_server, _from, state) do
     case kill_server_on_port(state.config.port) do
       :ok ->
@@ -492,42 +523,98 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
     end
   end
 
-  @impl GenServer
-  def handle_call({:complete, messages, options}, _from, state) do
-    if not state.ready do
-      {:reply, {:error, :not_ready}, state}
-    else
-      prompt = messages_to_prompt(messages)
 
-      payload = %{
-        prompt: prompt,
-        temperature: Keyword.get(options, :temperature, 0.7),
-        top_p: Keyword.get(options, :top_p, 0.8),
-        top_k: Keyword.get(options, :top_k, 40),
-        repeat_penalty: Keyword.get(options, :repeat_penalty, 1.05),
-        n_predict: Keyword.get(options, :n_predict, 512)
-      }
+  defp do_non_streaming_complete(messages, options, state) do
+    payload = build_payload(messages, options)
 
-      case Req.post("#{state.base_url}/completion", json: payload, receive_timeout: 60_000) do
-        {:ok, %{status: 200, body: %{"content" => content}}} ->
-          {:reply, {:ok, content}, state}
-        {:ok, response} ->
-          {:reply, {:error, {:unexpected_response, response}}, state}
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
+    case Req.post("#{state.base_url}/v1/chat/completions", json: payload, receive_timeout: 120_000) do
+      {:ok, %{status: 200, body: %{"choices" => [%{"message" => %{"content" => content}} | _]}}} ->
+        {:ok, strip_thinking_tags(content)}
+      {:ok, response} ->
+        {:error, {:unexpected_response, response}}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp messages_to_prompt(messages) do
-    Enum.map_join(messages, "\n", fn msg ->
-      case msg.role do
-        "system" -> "System: #{msg.content}"
-        "user" -> "User: #{msg.content}"
-        "assistant" -> "Assistant: #{msg.content}"
-        _ -> msg.content
+  defp do_streaming_complete(messages, options, callback, state) do
+    url = "#{state.base_url}/v1/chat/completions"
+    payload = build_payload(messages, options) |> Map.put("stream", true)
+    acc = :erlang.make_ref()
+    Process.put(acc, "")
+
+    result = Req.post(url,
+      json: payload,
+      into: fn {:data, chunk}, {req, resp} ->
+        parse_sse_chunks(chunk, callback, acc)
+        {:cont, {req, resp}}
+      end,
+      receive_timeout: Keyword.get(options, :timeout, 120_000)
+    )
+
+    full_text = Process.get(acc, "")
+    Process.delete(acc)
+
+    case result do
+      {:ok, %{status: 200}} ->
+        callback.(%{type: :complete})
+        {:ok, strip_thinking_tags(full_text)}
+      {:ok, resp} ->
+        callback.(%{type: :error, message: "Unexpected status: #{resp.status}"})
+        {:error, {:unexpected_response, resp}}
+      {:error, reason} ->
+        callback.(%{type: :error, message: inspect(reason)})
+        {:error, reason}
+    end
+  end
+
+  defp build_payload(messages, options) do
+    %{
+      "messages" => Enum.map(messages, &encode_message/1),
+      "temperature" => Keyword.get(options, :temperature, 0.7),
+      "top_p" => Keyword.get(options, :top_p, 0.8),
+      "max_tokens" => Keyword.get(options, :max_tokens, 4096)
+    }
+  end
+
+  defp encode_message(%{role: role, content: content}) when is_binary(content),
+    do: %{"role" => role, "content" => content}
+
+  defp encode_message(%{role: role, content: content}) when is_list(content),
+    do: %{"role" => role, "content" => Enum.map(content, &encode_content_block/1)}
+
+  defp encode_content_block(%{type: "text", text: text}),
+    do: %{"type" => "text", "text" => text}
+
+  defp encode_content_block(%{type: "image_url", image_url: %{url: url}}),
+    do: %{"type" => "image_url", "image_url" => %{"url" => url}}
+
+  defp parse_sse_chunks(chunk, callback, acc) do
+    chunk
+    |> String.split("\n")
+    |> Enum.each(fn line ->
+      line = String.trim(line)
+      case String.trim_leading(line, "data: ") do
+        ^line when line == "" -> :ok
+        ^line -> :ok  # not a data: line
+        "[DONE]" -> :ok
+        "" -> :ok
+        json_str ->
+          case Jason.decode(json_str) do
+            {:ok, %{"choices" => [%{"delta" => %{"content" => token}} | _]}} when is_binary(token) ->
+              callback.(%{type: :text, text: token})
+              Process.put(acc, Process.get(acc, "") <> token)
+            _ -> :ok
+          end
       end
-    end) <> "\nAssistant:"
+    end)
+  end
+
+  # TODO: Preserve thinking content instead of discarding — see memory/future_work.md
+  defp strip_thinking_tags(text) do
+    text
+    |> String.replace(~r/<think>.*?<\/think>\s*/s, "")
+    |> String.trim()
   end
 
   defp ensure_server_running(state) do
@@ -614,11 +701,8 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
       "--n-gpu-layers", to_string(config.gpu_layers || 99)
     ]
 
-    args = if config[:chat_template] do
-      args ++ ["--chat-template", config.chat_template]
-    else
-      args
-    end
+    args = maybe_add_optional_arg(args, config, :mmproj_file, "--mmproj", config.model_path)
+    args = maybe_add_optional_arg(args, config, :chat_template, "--chat-template")
 
     shell_cmd = "exec #{config.server_path} #{Enum.map_join(args, " ", &shell_quote/1)} > #{log_file} 2>&1"
 
@@ -637,6 +721,15 @@ defmodule Quicksilver.LlmEngine.Backends.LlamaCpp do
     Logger.info("llama.cpp server linked to Quicksilver (will shutdown with app)")
     Logger.info("Model loading in progress (this may take 30-60 seconds)...")
     port
+  end
+
+  defp maybe_add_optional_arg(args, config, key, flag, prefix \\ nil) do
+    case config[key] do
+      nil -> args
+      value ->
+        full_value = if prefix, do: prefix <> "/" <> value, else: value
+        args ++ [flag, full_value]
+    end
   end
 
   defp shell_quote(str) do

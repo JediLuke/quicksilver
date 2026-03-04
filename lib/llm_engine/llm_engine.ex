@@ -13,6 +13,16 @@ defmodule Quicksilver.LlmEngine do
     claude_cli: Quicksilver.LlmEngine.Backends.ClaudeCli
   }
 
+  @backend_labels %{
+    llama_cpp: "Llama.cpp (local)",
+    claude_cli: "Claude CLI",
+    openai: "OpenAI",
+    anthropic: "Anthropic API"
+  }
+
+  def available_backends, do: Map.keys(@backends)
+  def backend_labels, do: @backend_labels
+
   @doc """
   Send a completion request to the LLM backend.
 
