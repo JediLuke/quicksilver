@@ -59,13 +59,7 @@ defmodule Quicksilver.Tools.CreateFile do
   end
 
   defp request_approval_if_needed(path, content, context) do
-    policy = Map.get(context, :approval_policy, Quicksilver.Approval.Policy.default())
-
-    if Quicksilver.Approval.Policy.should_request_approval?(policy, "create_file", %{path: path}) do
-      Quicksilver.Approval.Interactive.request_approval(:file_create, %{path: path, content: content})
-    else
-      :approved
-    end
+    Quicksilver.Tools.Behaviour.request_approval(context, :file_create, %{path: path, content: content})
   end
 
   defp resolve_path(path, workspace_root) do

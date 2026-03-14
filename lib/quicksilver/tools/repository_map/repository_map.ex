@@ -1,4 +1,4 @@
-defmodule Quicksilver.RepositoryMap.AgentIntegration do
+defmodule Quicksilver.Tools.RepositoryMap do
   @moduledoc """
   High-level API for integrating repository maps with coding agents.
   Manages repository map lifecycle and provides context generation.
@@ -6,15 +6,15 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   use GenServer
   require Logger
 
-  alias Quicksilver.RepositoryMap.{Parser, Cache, Formatter}
-  alias Quicksilver.RepositoryMap.Graph, as: RepoGraph
+  alias Quicksilver.Tools.RepositoryMap.{Parser, Cache, Formatter}
+  alias Quicksilver.Tools.RepositoryMap.Graph, as: RepoGraph
 
   defstruct [:repo_path, :map, :graph, :scores, :last_updated]
 
   # Client API
 
   @doc """
-  Start an agent integration process for a repository.
+  Start a repository map process for a repository.
   """
   def start_link(repo_path, opts \\ []) do
     GenServer.start_link(__MODULE__, {repo_path, opts})
@@ -32,7 +32,7 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   @doc """
   Find entities matching a pattern.
   """
-  @spec find_entities(pid(), String.t()) :: {:ok, list(Entity.t())} | {:error, term()}
+  @spec find_entities(pid(), String.t()) :: {:ok, list()} | {:error, term()}
   def find_entities(pid, pattern) do
     GenServer.call(pid, {:find_entities, pattern})
   end
@@ -74,7 +74,6 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
 
   @impl true
   def init({repo_path, _opts}) do
-    # Try to load from cache first
     state = %__MODULE__{
       repo_path: repo_path,
       last_updated: nil
@@ -159,7 +158,6 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
         timestamp: DateTime.utc_now()
       }
 
-      # Cache the result
       Cache.Server.put(repo_path, map_data)
 
       {:ok, map_data}
@@ -167,20 +165,15 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   end
 
   defp build_task_context(task_description, state, opts) do
-    # Extract keywords from task description
     keywords = extract_keywords(task_description)
-
-    # Find relevant entities based on keywords and scores
     relevant_entities = find_relevant_entities(keywords, state)
 
-    # Get relevant files
     relevant_files =
       relevant_entities
       |> Enum.map(& &1.file_path)
       |> Enum.uniq()
       |> Enum.take(20)
 
-    # Build focused map for formatting
     focused_map = %{
       entities: Map.new(relevant_entities, fn e -> {e.id, e} end),
       files: relevant_files,
@@ -188,7 +181,6 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
       scores: state.scores
     }
 
-    # Format for LLM
     token_limit = Keyword.get(opts, :token_limit, 4000)
 
     Formatter.LLM.format(focused_map,
@@ -243,7 +235,6 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
         acc + score
       end)
 
-    # Combine keyword relevance with PageRank score
     keyword_score * (1.0 + base_score)
   end
 
@@ -264,7 +255,6 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   end
 
   defp get_related_entities(entity_id, depth, graph) do
-    # BFS to find related entities
     visited = MapSet.new([entity_id])
     queue = :queue.in({entity_id, 0}, :queue.new())
 
@@ -274,33 +264,27 @@ defmodule Quicksilver.RepositoryMap.AgentIntegration do
   defp collect_related(queue, visited, graph, max_depth, acc) do
     case :queue.out(queue) do
       {{:value, {vertex, depth}}, rest_queue} when depth < max_depth ->
-        # Get neighbors (both incoming and outgoing)
         neighbors =
           (Graph.out_neighbors(graph, vertex) ++ Graph.in_neighbors(graph, vertex))
           |> Enum.uniq()
 
-        # Filter unvisited
         unvisited = Enum.reject(neighbors, &MapSet.member?(visited, &1))
 
-        # Add to queue
         new_queue =
           Enum.reduce(unvisited, rest_queue, fn neighbor, q ->
             :queue.in({neighbor, depth + 1}, q)
           end)
 
-        # Update visited
         new_visited =
           Enum.reduce(unvisited, visited, fn neighbor, v ->
             MapSet.put(v, neighbor)
           end)
 
-        # Add to results
         new_acc = [{vertex, depth} | acc]
 
         collect_related(new_queue, new_visited, graph, max_depth, new_acc)
 
       {{:value, {vertex, depth}}, rest_queue} ->
-        # Max depth reached, just add to results
         collect_related(rest_queue, visited, graph, max_depth, [{vertex, depth} | acc])
 
       {:empty, _} ->

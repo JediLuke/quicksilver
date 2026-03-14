@@ -7,8 +7,6 @@ defmodule Quicksilver.Tools.Formatter do
   models might produce.
   """
 
-  require Logger
-
   @doc """
   Build a system prompt that includes available tools.
 
@@ -111,8 +109,6 @@ defmodule Quicksilver.Tools.Formatter do
   end
 
   defp parse_embedded_json(text) do
-    # Try to find JSON objects in the text - improved regex to handle nested braces
-    # Look for { ... "tool" ... "arguments": { ... } ... }
     json_regex = ~r/\{[^{}]*"tool"[^{}]*"arguments"[^{}]*\{[^{}]*\}[^{}]*\}/s
 
     case Regex.run(json_regex, text) do
@@ -122,18 +118,15 @@ defmodule Quicksilver.Tools.Formatter do
             extract_tool_call(json)
 
           {:error, _} ->
-            # Failed to parse, try extracting differently
             extract_json_from_text(text)
         end
 
       nil ->
-        # Try a more permissive approach
         extract_json_from_text(text)
     end
   end
 
   defp extract_json_from_text(text) do
-    # Find any JSON-like structure with balanced braces
     case find_balanced_json(text) do
       {:ok, json_str} ->
         case Jason.decode(json_str) do
@@ -147,7 +140,6 @@ defmodule Quicksilver.Tools.Formatter do
   end
 
   defp find_balanced_json(text) do
-    # Find the first { and try to match balanced braces
     case String.split(text, "{", parts: 2) do
       [_before, after_open] ->
         case find_closing_brace(after_open, 1, "") do
@@ -201,6 +193,35 @@ defmodule Quicksilver.Tools.Formatter do
     """
     Tool '#{tool_name}' failed:
     Error: #{reason}
+    """
+  end
+
+  @doc """
+  Build a simple prompt without tool instructions.
+
+  Used by bare conversations (no tools). Includes the system prompt (if any)
+  and formatted conversation history.
+  """
+  @spec simple_prompt(String.t() | nil, [map()]) :: String.t()
+  def simple_prompt(nil, history) do
+    conversation = format_conversation_history(history)
+
+    """
+    #{conversation}
+
+    Assistant:
+    """
+  end
+
+  def simple_prompt(system_prompt, history) do
+    conversation = format_conversation_history(history)
+
+    """
+    #{system_prompt}
+
+    #{conversation}
+
+    Assistant:
     """
   end
 

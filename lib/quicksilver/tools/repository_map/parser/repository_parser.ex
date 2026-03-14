@@ -1,9 +1,9 @@
-defmodule Quicksilver.RepositoryMap.Parser.RepositoryParser do
+defmodule Quicksilver.Tools.RepositoryMap.Parser.RepositoryParser do
   @moduledoc """
   Parses entire repository into entities using concurrent processing.
   """
   require Logger
-  alias Quicksilver.RepositoryMap.Parser.{Entity, ElixirParser}
+  alias Quicksilver.Tools.RepositoryMap.Parser.{Entity, ElixirParser}
 
   @type parse_result :: %{
           entities: %{String.t() => Entity.t()},
@@ -52,7 +52,6 @@ defmodule Quicksilver.RepositoryMap.Parser.RepositoryParser do
   defp parse_files_concurrent(files, repo_path, opts) do
     max_concurrency = Keyword.get(opts, :max_concurrency, System.schedulers_online())
 
-    # Use Flow for parallel processing
     files
     |> Flow.from_enumerable(max_demand: 20, stages: max_concurrency)
     |> Flow.map(fn file ->

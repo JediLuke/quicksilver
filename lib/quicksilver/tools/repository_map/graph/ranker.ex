@@ -1,4 +1,4 @@
-defmodule Quicksilver.RepositoryMap.Graph.Ranker do
+defmodule Quicksilver.Tools.RepositoryMap.Graph.Ranker do
   @moduledoc """
   PageRank implementation for entity importance scoring.
   Assigns scores to entities based on their position in the call graph.
@@ -28,11 +28,9 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
     if num_vertices == 0 do
       %{}
     else
-      # Initialize scores
       initial_score = 1.0 / num_vertices
       scores = Map.new(vertices, fn v -> {v, initial_score} end)
 
-      # Iterate until convergence
       final_scores =
         1..max_iterations
         |> Enum.reduce_while(scores, fn _iteration, prev_scores ->
@@ -45,7 +43,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
           end
         end)
 
-      # Apply weights based on entity type and location
       final_scores
       |> apply_type_weights(graph)
       |> apply_location_weights(graph)
@@ -55,7 +52,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
 
   defp calculate_iteration(graph, scores, damping, num_vertices) do
     Map.new(Graph.vertices(graph), fn vertex ->
-      # Get incoming edges
       incoming = Graph.in_edges(graph, vertex)
 
       rank =
@@ -100,7 +96,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
           [entity | _] ->
             base_weight = Map.get(type_weights, entity.type, 1.0)
 
-            # Adjust for visibility (private functions are less important)
             if entity.type in [:function, :macro] do
               case entity.metadata[:visibility] do
                 :private -> base_weight * 0.8
@@ -119,7 +114,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
   end
 
   defp apply_location_weights(scores, graph) do
-    # Patterns for important files (higher weight)
     important_patterns = [
       ~r/lib\/quicksilver\.ex$/,
       ~r/lib\/quicksilver\/application\.ex$/,
@@ -129,7 +123,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
       ~r/lib\/.*\/core\//
     ]
 
-    # Patterns for less important files (lower weight)
     unimportant_patterns = [
       ~r/test\//,
       ~r/deps\//,
@@ -155,7 +148,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
             1.0
         end
 
-      # Penalize deep nesting
       depth =
         case Graph.vertex_labels(graph, vertex) do
           [entity | _] ->
@@ -180,11 +172,9 @@ defmodule Quicksilver.RepositoryMap.Graph.Ranker do
 
     case {min_score, max_score} do
       {min, max} when min == max ->
-        # All scores are the same, normalize to 0.5
         Map.new(scores, fn {k, _v} -> {k, 0.5} end)
 
       {min, max} ->
-        # Min-max normalization to [0, 1]
         Map.new(scores, fn {k, v} ->
           normalized = (v - min) / (max - min)
           {k, normalized}

@@ -1,9 +1,9 @@
-defmodule Quicksilver.RepositoryMap.Formatter.LLM do
+defmodule Quicksilver.Tools.RepositoryMap.Formatter.LLM do
   @moduledoc """
   Formats repository map for LLM consumption.
   Creates a token-efficient representation of the codebase.
   """
-  
+
   @default_token_limit 4000
 
   @doc """
@@ -19,7 +19,6 @@ defmodule Quicksilver.RepositoryMap.Formatter.LLM do
     token_limit = Keyword.get(opts, :token_limit, @default_token_limit)
     focus_keywords = Keyword.get(opts, :focus_keywords, [])
 
-    # Filter and score entities based on focus
     scored_entities = score_entities(repository_map, focus_keywords)
 
     output =
@@ -87,7 +86,6 @@ defmodule Quicksilver.RepositoryMap.Formatter.LLM do
   end
 
   defp add_key_entities(sections, scored_entities, _repository_map) do
-    # Group by file and take top entities
     top_entities =
       scored_entities
       |> Enum.take(50)
@@ -153,9 +151,9 @@ defmodule Quicksilver.RepositoryMap.Formatter.LLM do
     |> Enum.map(fn {entity, score} ->
       score_indicator =
         cond do
-          score > 0.7 -> "⭐⭐⭐"
-          score > 0.4 -> "⭐⭐"
-          true -> "⭐"
+          score > 0.7 -> "***"
+          score > 0.4 -> "**"
+          true -> "*"
         end
 
       doc_snippet =
@@ -212,7 +210,6 @@ defmodule Quicksilver.RepositoryMap.Formatter.LLM do
   end
 
   defp trim_to_token_limit(text, limit) do
-    # Rough approximation: 1 token ≈ 4 characters
     estimated_tokens = String.length(text) / 4
 
     if estimated_tokens <= limit do

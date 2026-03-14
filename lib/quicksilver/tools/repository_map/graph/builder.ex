@@ -1,4 +1,4 @@
-defmodule Quicksilver.RepositoryMap.Graph.Builder do
+defmodule Quicksilver.Tools.RepositoryMap.Graph.Builder do
   @moduledoc """
   Builds call/dependency graph from parsed entities.
   """
@@ -11,7 +11,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   def build(entities) do
     graph = Graph.new(type: :directed)
 
-    # Add all entities as vertices
     graph =
       entities
       |> Map.values()
@@ -19,7 +18,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
         Graph.add_vertex(g, entity.id, entity)
       end)
 
-    # Add edges for relationships
     graph = add_call_edges(graph, entities)
     graph = add_import_edges(graph, entities)
     graph = add_parent_child_edges(graph, entities)
@@ -82,11 +80,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   end
 
   defp resolve_reference(ref, context_entity, all_entities) do
-    # Try to find the referenced entity
-    # 1. Check in same file (local function)
-    # 2. Check in imported/used modules
-    # 3. Check globally by name
-
     cond do
       local = find_local_entity(ref, context_entity, all_entities) ->
         local
@@ -100,7 +93,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   end
 
   defp find_local_entity(ref, context_entity, all_entities) do
-    # Look for entities in the same file
     all_entities
     |> Map.values()
     |> Enum.find(fn e ->
@@ -114,7 +106,6 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   end
 
   defp find_global_entity(ref, all_entities) do
-    # Look for entities by full name match or partial match
     all_entities
     |> Map.values()
     |> Enum.find(fn e ->
@@ -141,14 +132,12 @@ defmodule Quicksilver.RepositoryMap.Graph.Builder do
   end
 
   defp extract_name_arity(ref) do
-    # Extract the function name/arity from references like "Module.function/2"
     ref
     |> String.split(".")
     |> List.last()
   end
 
   defp match_module_function?(entity_name, ref) do
-    # Check if ref matches "Module.function/arity" pattern
     case String.split(ref, ".", parts: 2) do
       [_module, function_arity] ->
         String.ends_with?(entity_name, function_arity)

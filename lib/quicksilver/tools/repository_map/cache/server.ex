@@ -1,4 +1,4 @@
-defmodule Quicksilver.RepositoryMap.Cache.Server do
+defmodule Quicksilver.Tools.RepositoryMap.Cache.Server do
   @moduledoc """
   GenServer for caching repository maps with ETS backend.
   Provides fast concurrent reads and automatic invalidation.
@@ -74,7 +74,6 @@ defmodule Quicksilver.RepositoryMap.Cache.Server do
 
   @impl true
   def init(opts) do
-    # Create ETS table with concurrent read optimization
     :ets.new(@table_name, [
       :set,
       :public,
@@ -83,7 +82,6 @@ defmodule Quicksilver.RepositoryMap.Cache.Server do
       write_concurrency: true
     ])
 
-    # Start cleanup timer
     schedule_cleanup()
 
     state = %{
@@ -93,7 +91,7 @@ defmodule Quicksilver.RepositoryMap.Cache.Server do
       misses: 0
     }
 
-    Logger.info("Repository map cache started")
+    Logger.debug("Repository map cache started")
 
     {:ok, state}
   end
@@ -102,7 +100,6 @@ defmodule Quicksilver.RepositoryMap.Cache.Server do
   def handle_cast({:put, repo_path, map}, state) do
     timestamp = System.monotonic_time(:millisecond)
 
-    # Check size limit
     state =
       if :ets.info(@table_name, :size) >= state.max_size do
         evict_oldest()
@@ -178,7 +175,6 @@ defmodule Quicksilver.RepositoryMap.Cache.Server do
   end
 
   defp evict_oldest do
-    # Find the oldest entry and delete it
     case :ets.match(@table_name, {:"$1", :_, :"$2"}) do
       [] ->
         :ok

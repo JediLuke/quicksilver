@@ -1,8 +1,8 @@
-defmodule Quicksilver.RepositoryMap.Parser.ElixirParser do
+defmodule Quicksilver.Tools.RepositoryMap.Parser.ElixirParser do
   @moduledoc """
   Elixir-specific parsing using AST (Code.string_to_quoted)
   """
-  alias Quicksilver.RepositoryMap.Parser.Entity
+  alias Quicksilver.Tools.RepositoryMap.Parser.Entity
 
   @doc """
   Parse Elixir code content and extract entities.
@@ -209,12 +209,10 @@ defmodule Quicksilver.RepositoryMap.Parser.ElixirParser do
   end
 
   defp extract_attributes(_ast) do
-    # Could extract @moduledoc, @doc, custom attributes, etc.
     %{}
   end
 
   defp extract_doc(ast) do
-    # Try to find @moduledoc or @doc in the AST
     {_ast, doc} =
       Macro.prewalk(ast, nil, fn
         {:@, _, [{:moduledoc, _, [doc_string]}]}, _acc when is_binary(doc_string) ->
@@ -231,7 +229,6 @@ defmodule Quicksilver.RepositoryMap.Parser.ElixirParser do
   end
 
   defp find_end_line([{:do, block} | _], start_line) do
-    # Walk the block to find the last line
     max_line =
       Macro.prewalk(block, start_line, fn
         {_, meta, _}, acc when is_list(meta) ->

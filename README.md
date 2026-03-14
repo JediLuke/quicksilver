@@ -1,137 +1,128 @@
 # Quicksilver
 
-🧪 Quicksilver – The Alchemical Agentic Framework for Elixir
+Ephemeral LLM conversation threads for Elixir.
 
-Quicksilver is an Elixir-native AI sidekick framework for building intelligent, modular agents powered by local and remote LLMs. Designed for hackers, researchers, and builders, Quicksilver lets you:
+Quicksilver provides ephemeral, tool-capable conversation threads powered by multiple LLM backends. The simplest conversation is a bare chat. Add tools and you get an iterative reasoning loop. Real "agents" — things with goals, directives, persistence — belong in a layer above.
 
-⚡ Run interchangeable agents with distinct personalities and goals
-🧠 Plug into any LLM backend (e.g. llama.cpp, OpenAI, Together.ai)
-🔮 Craft tools and memory systems your agents can use to reason and act
-🚀 Harness Elixir's concurrency to orchestrate many agents at once
-🦾 Stay in control — run powerful open models on your own GPU
-
-Whether you're creating an autonomous research assistant, a conversational sidekick, or a multi-agent system, Quicksilver is your spellbook for building agentic intelligence in Elixir.
+- Create ephemeral conversations with optional tool-calling
+- Multiple backends: local llama.cpp, OpenAI, Anthropic, Claude CLI
+- Modular tools for file operations, code search, and repository analysis
+- Elixir concurrency for parallel code parsing and PageRank analysis
 
 ## Quick Start
 
-### Start the Terminal Chat Interface
+### Conversations
+
+```elixir
+# Bare chat — no tools, no system prompt
+ctx = Quicksilver.Conversation.new()
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Tell me more")
+
+# Different backends
+ctx = Quicksilver.Conversation.new(backend: :openai)
+ctx = Quicksilver.Conversation.new(backend: :anthropic)
+ctx = Quicksilver.Conversation.new(backend: :claude_cli)
+
+# Chat with a system prompt
+ctx = Quicksilver.Conversation.new(system_prompt: "You are an Elixir expert.")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "What is GenServer?")
+
+# Tool-calling conversation (iterative reasoning loop)
+ctx = Quicksilver.Conversation.new(
+  tools: :all,
+  workspace_root: File.cwd!()
+)
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Read mix.exs")
+
+# Selective tools
+ctx = Quicksilver.Conversation.new(tools: ["read_file", "search_files"])
+
+# History management
+Quicksilver.Conversation.history(ctx)   # => [%{role: "user", ...}, ...]
+ctx = Quicksilver.Conversation.clear(ctx)  # clear history, keep config
+```
+
+### Terminal Chat Interface
 
 ```bash
-# Easiest way - start chatting immediately
 mix run start_chat.exs
 ```
 
 Or from IEx:
 ```elixir
 iex -S mix
-iex> Quicksilver.Interfaces.Terminal.start()
+iex> Quicksilver.chat()
+iex> Quicksilver.chat(backend: :openai, tools: :none)
 ```
 
-### Try These Commands
-
-Once in the terminal:
-- `tools` - See what the agent can do
-- `agents` - List available agents
-- `agent <name>` - Switch to a different agent
-- `help` - Show all commands
-- `exit` - Quit
-
-### Example Questions
-
-**File Operations:**
-```
-Read the mix.exs file
-What dependencies does this project have?
-Show me the contents of lib/quicksilver/tools/registry.ex
-```
-
-**Search Operations:**
-```
-Search for defmodule in the codebase
-Find all files with "GenServer" in them
-Search for the word "tool" in .ex files
-```
-
-**Analysis:**
-```
-What is this project about?
-What are the main components of this project?
-List all the modules in lib/quicksilver/tools/
-```
-
-## Features
-
-### 🔧 Tool-Calling Agent
-
-The **ToolAgent** can autonomously use tools to answer your questions:
-
-- **read_file** - Read any file in the workspace
-- **search_files** - Search the codebase with ripgrep/grep
-- Iterative reasoning (up to 10 tool calls per task)
-- Robust JSON parsing for various LLM formats
-
-### 🤖 Multi-Agent System
-
-Switch between specialized agents during a conversation:
-
-```elixir
-you> agents                    # List all agents
-you> agent tool_agent          # Switch to tool agent
-you> What tools do you have?   # Agent responds
-```
-
-History is preserved when switching agents.
-
-### 🔌 Backend Abstraction
-
-Works with any LLM backend:
-
-```elixir
-# Direct backend usage
-{:ok, response} = Quicksilver.Backends.LlamaCpp.complete(
-  LlamaCpp,
-  [%{role: "user", content: "Hello!"}]
-)
-
-IO.puts(response)
-```
-
-## Testing
-
-Run the test suite:
-
-```bash
-mix run test_tools.exs
-```
-
-This validates:
-- Tool registration and listing
-- File reading capability
-- File searching capability
-- End-to-end agent task execution
+Commands: `tools`, `help`, `history`, `clear`, `exit`
 
 ## Architecture
 
 ```
-Terminal → Agent → Backend (LLM)
-             ↓
-          Tools
-          (read_file, search_files)
+Layer Above (your code)
+  - Goals, directives, persistence
+  - Owns one or more Conversations
+          |
+          v
+Quicksilver.Conversation (struct, not process)
+  - Ephemeral message thread
+  - Optional tool-calling loop
+  - No persistence, no goals
+          |
+          v
+Quicksilver.LlmEngine
+  - Backend-agnostic completions
+  - Multiple providers
 ```
 
-### Adding New Agents
+| Concern | Quicksilver | Layer Above |
+|---------|-------------|-------------|
+| LLM calls | Yes | No (uses Quicksilver) |
+| Message history | In-memory, ephemeral | Persists to disk/DB |
+| Tool execution | Yes | Registers custom tools |
+| Conversation threads | Creates and manages | Owns one or more |
+| Goals / directives | No | Yes |
+| Long-term memory | No | Yes |
 
-1. Create your agent module with `execute_task/3`
-2. Add to supervision tree in `lib/application.ex`
-3. Register in terminal's `@available_agents`
+### Supervision Tree
 
-See `QUICKSILVER.md` for detailed architecture.
+```elixir
+Quicksilver.Application
+├── Quicksilver.LlmEngine.Backends.LlamaCpp (GenServer)
+├── Quicksilver.Tools.Registry (GenServer)
+└── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
+```
 
-## Adding New Tools
+Conversations are structs — no processes, no supervision needed.
+
+## Backends
+
+| Key | Module | Type |
+|-----|--------|------|
+| `:llama_cpp` | `Quicksilver.LlmEngine.Backends.LlamaCpp` | Local llama.cpp (GenServer) |
+| `:openai` | `Quicksilver.LlmEngine.Backends.OpenAI` | OpenAI API (stateless) |
+| `:anthropic` | `Quicksilver.LlmEngine.Backends.Anthropic` | Anthropic API (stateless) |
+| `:claude_cli` | `Quicksilver.LlmEngine.Backends.ClaudeCli` | Claude CLI headless (stateful) |
+
+## Tools
+
+**Read-only:**
+- `read_file` - Read any file in the workspace
+- `search_files` - Search the codebase with ripgrep/grep
+- `list_files` - List files with glob patterns
+- `get_repository_context` - PageRank-based code analysis
+- `run_tests` - Run mix test
+
+**Write (require approval):**
+- `create_file` / `edit_file` - Create and edit files
+
+### Adding New Tools
 
 1. Implement `Quicksilver.Tools.Behaviour`:
    ```elixir
-   defmodule MyTool do
+   defmodule Quicksilver.Tools.MyTool do
      @behaviour Quicksilver.Tools.Behaviour
 
      def name, do: "my_tool"
@@ -141,105 +132,68 @@ See `QUICKSILVER.md` for detailed architecture.
    end
    ```
 
-2. Register in `lib/quicksilver/tools.ex`
+2. Register in `lib/quicksilver/tools/tools.ex` `register_default_tools/0`
 
 ## Configuration
 
-See `config/config.exs` for llama.cpp server settings:
-- Model path and file
-- Server port
-- GPU layers
-- Context size
-- **auto_start** - Set to `true` to automatically load model on startup (defaults to `false`)
-
-### Backend Management
-
-Quicksilver provides flexible control over the LLM backend:
-
-#### Manual Start (Default - Recommended)
-
-By default, Quicksilver does NOT auto-start the server. This prevents unexpected resource usage:
-
 ```elixir
 # config/config.exs
-llama_cpp: %{
-  auto_start: false  # or omit - defaults to false
-}
+
+# Local LlamaCpp
+config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
+  server_path: "/path/to/llama-server",
+  model_path: "/path/to/models/",
+  model_file: "model.gguf",
+  port: 8080,
+  threads: 16,
+  ctx_size: 8192,
+  gpu_layers: 99,
+  auto_start: true
+
+# OpenAI
+config :quicksilver, Quicksilver.LlmEngine.Backends.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: "gpt-4o"
+
+# Anthropic
+config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  model: "claude-sonnet-4-6"
 ```
 
-#### Auto-Start
-
-To automatically load the model on startup, set `auto_start: true`:
+## API Reference
 
 ```elixir
-# config/config.exs
-llama_cpp: %{
-  model_file: "Llama-3.3-70B-Instruct-Q4_K_M.gguf",
-  auto_start: false  # Don't load model on startup
-}
+# Conversations
+ctx = Quicksilver.Conversation.new(opts)
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, message)
+Quicksilver.Conversation.history(ctx)
+Quicksilver.Conversation.clear(ctx)
+
+# Terminal
+Quicksilver.chat()
+Quicksilver.chat(backend: :openai, tools: :none)
+
+# LLM Engine
+Quicksilver.LlmEngine.complete(messages, backend: :openai)
+Quicksilver.LlmEngine.health_check(backend: :llama_cpp)
+
+# Tools
+Quicksilver.list_tools()
+Quicksilver.register_tool(module)
+Quicksilver.execute_tool(name, args, context)
 ```
 
-Then start the backend manually when ready:
+## Testing
 
-**Option 1: Standalone Server (Recommended)**
-```elixir
-# Start server that persists across Quicksilver restarts
-iex> Quicksilver.Backends.LlamaCpp.start_standalone()
-
-# Later, when done:
-iex> Quicksilver.Backends.LlamaCpp.stop_standalone()
+```bash
+mix test
 ```
-
-**Option 2: Managed Server**
-```elixir
-# Server shuts down when Quicksilver exits
-iex> Quicksilver.Backends.LlamaCpp.start_owned_server()
-```
-
-**Option 3: Auto-Initialize**
-```elixir
-# Connect to existing server or start new one
-iex> Quicksilver.Backends.LlamaCpp.initialize()
-```
-
-#### Checking Server Status
-
-```elixir
-iex> Quicksilver.Backends.LlamaCpp.server_running?()
-true
-
-iex> Quicksilver.Backends.LlamaCpp.health_check(LlamaCpp)
-:ok
-```
-
-## Project Status
-
-✅ Tool-calling system working
-✅ Multi-agent terminal interface
-✅ Read and search tools implemented
-✅ Full test coverage
-✅ Production-ready architecture
 
 ## Troubleshooting
 
 **"Backend not ready"** - Wait a few seconds for the llama.cpp server to finish loading the model
 
-**No tool calls happening** - Check debug logs to see LLM output, try more explicit requests, some models are better at tool-calling than others
+**No tool calls happening** - Check debug logs to see LLM output, try more explicit requests
 
-**Agent gives wrong answers** - Try `clear` command to reset history, rephrase your question more specifically
-
-## Advanced Usage
-
-### Direct API Access
-
-Call the ToolAgent directly from Elixir code:
-
-```elixir
-{:ok, response} = Quicksilver.Agents.ToolAgent.execute_task(
-  Quicksilver.Agents.ToolAgent,
-  "What is this project about?",
-  workspace_root: File.cwd!()
-)
-
-IO.puts(response)
-```
+**Wrong answers** - Try `clear` command to reset history, rephrase your question

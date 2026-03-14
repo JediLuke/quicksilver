@@ -1,6 +1,9 @@
-defmodule Quicksilver.Approval.Interactive do
+defmodule Quicksilver.Interfaces.Interactive do
   @moduledoc """
-  Interactive approval for dangerous operations with diff previews.
+  IO-based interactive approval for destructive operations.
+
+  Shows diffs and prompts the user for approval via terminal IO.
+  Injected as the `approve` callback by `Quicksilver.Interfaces.Terminal`.
   """
 
   @doc """
@@ -9,7 +12,7 @@ defmodule Quicksilver.Approval.Interactive do
   """
   @spec request_approval(atom(), map()) :: :approved | :rejected | :quit_session
   def request_approval(action_type, details) do
-    IO.puts("\n" <> IO.ANSI.yellow() <> "═══ AI Agent Request ═══" <> IO.ANSI.reset())
+    IO.puts("\n" <> IO.ANSI.yellow() <> "=== AI Agent Request ===" <> IO.ANSI.reset())
 
     case action_type do
       :file_edit -> show_file_edit(details)
@@ -22,13 +25,13 @@ defmodule Quicksilver.Approval.Interactive do
   end
 
   defp show_file_edit(%{path: path, diff: diff}) do
-    IO.puts("\n📝 Edit File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
+    IO.puts("\nEdit File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
     IO.puts("\nChanges:")
     show_diff(diff)
   end
 
   defp show_file_create(%{path: path, content: content}) do
-    IO.puts("\n📄 Create File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
+    IO.puts("\nCreate File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
     lines = String.split(content, "\n") |> length()
     bytes = byte_size(content)
     IO.puts("Size: #{lines} lines, #{bytes} bytes")
@@ -40,11 +43,11 @@ defmodule Quicksilver.Approval.Interactive do
   end
 
   defp show_file_delete(%{path: path}) do
-    IO.puts("\n🗑️  Delete File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
+    IO.puts("\nDelete File: " <> IO.ANSI.bright() <> path <> IO.ANSI.reset())
   end
 
   defp show_shell_command(%{command: cmd, working_dir: dir}) do
-    IO.puts("\n⚡ Shell Command")
+    IO.puts("\nShell Command")
     IO.puts("Directory: #{dir}")
     IO.puts("Command: " <> IO.ANSI.cyan() <> cmd <> IO.ANSI.reset())
   end

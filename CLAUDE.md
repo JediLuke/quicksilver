@@ -4,75 +4,190 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-Quicksilver is an Elixir-native agentic framework with tool-calling capabilities. The key architectural pattern is:
+Quicksilver is an Elixir-native framework for ephemeral LLM conversation threads with optional tool-calling, organized into two layers:
+
+1. **Conversation** (`lib/quicksilver/`) — ephemeral conversation threads (struct, not process), tools, approval, repository map, interfaces
+2. **LLM Engine** (`lib/llm_engine/`) — backend-agnostic LLM completions with multiple providers
+
+The Conversation is the primary abstraction. A bare chat with no tools and a sophisticated tool-calling loop are architecturally the same thing — a `%Quicksilver.Conversation{}` struct tracking message history and configuration.
 
 ```
-Terminal Interface (though any interface can be used)
-    ↓
-ToolAgent (GenServer, multiple agents can exist and be used)
-    ↓
-Backend (LlamaCpp) → External LLM Server
-    ↓
-Tools (Registry + Individual Tools)
+Layer Above (future "agent" libraries)
+  - Goals, directives, persistence, long memory
+  - Owns one or more Quicksilver Conversations
+                    |
+                    v
+Quicksilver.Conversation
+  - Ephemeral message thread (struct, not process)
+  - Optional tool-calling loop
+  - Optional system prompt & context
+  - No persistence, no goals, no directives
+                    |
+                    v
+Quicksilver.LlmEngine
+  - Backend-agnostic LLM completions
+  - Multiple backends: LlamaCpp, OpenAI, Anthropic, Claude CLI
 ```
 
-### Critical Design Patterns
+### What Quicksilver IS
+- An ephemeral conversation thread manager
+- A tool-calling execution engine
+- A multi-backend LLM interface
+- A terminal chat interface
 
-**1. Agentic Loop with Per-Iteration Timeouts**
+### What Quicksilver IS NOT
+- An agent framework (agents live above)
+- A persistence layer (no disk, no database)
+- A goal/directive system
+- A long-term memory system
 
-The ToolAgent (`lib/quicksilver/agents/tool_agent.ex`) implements an iterative reasoning loop:
-- Max 50 iterations per task (configurable)
-- Each iteration has a 5-minute timeout (per-iteration, not total)
-- Overall 10-minute safety timeout on the GenServer call
-- Uses `Task.async` + `Task.yield` for per-iteration timeout control
-- On each iteration: prompt LLM → parse response → execute tool → add to history → repeat
+### Supervision Tree
+
+```elixir
+Quicksilver.Supervisor (strategy: :one_for_one)
+├── Quicksilver.LlmEngine.Backends.LlamaCpp (GenServer)
+├── Quicksilver.Tools.Registry (GenServer)
+└── Quicksilver.Tools.RepositoryMap.Cache.Server (GenServer)
+```
+
+Conversations are **structs, not processes** — the caller owns the struct and manages its lifecycle.
+
+### Key Design Patterns
+
+**1. Conversation as Primary Abstraction**
+
+The `%Quicksilver.Conversation{}` struct tracks:
+- Message history (accumulated back-and-forth)
+- Configuration (backend, tools, system prompt, timeouts)
+- Backend state (for stateful backends like Claude CLI)
+- Approval callback (injected by caller)
+- No persistence — Quicksilver never saves to disk
+
+Send behaviour is determined by the `tools` field:
+- `tools: :none` — single LLM call, no tool parsing (bare chat)
+- `tools: :all` or `tools: [list]` — iterative tool-calling loop until text response
 
 **2. Tool System Architecture**
 
-Tools are defined via the `Quicksilver.Tools.Behaviour`:
+Tools are defined via `Quicksilver.Tools.Behaviour`:
 - `name/0` - Unique identifier
 - `description/0` - LLM-facing description
 - `parameters_schema/0` - JSON schema for arguments
 - `execute/2` - Implementation (args, context)
 
-The Registry (`lib/quicksilver/tools/registry.ex`) is an Agent that stores tool modules and handles execution.
+The Registry (`lib/quicksilver/tools/registry.ex`) is a GenServer that stores tool modules and handles execution.
 
 The Formatter (`lib/quicksilver/tools/formatter.ex`) converts tools to LLM prompts and parses tool calls from various JSON formats.
 
 **3. Approval System for Destructive Operations**
 
-Located in `lib/quicksilver/approval/`:
-- `Policy` - Defines which tools require approval
-- `Interactive` - Shows diffs and prompts user for [A]pprove/[R]eject/[Q]uit
-
-Context includes `:approval_policy` which is checked before executing write tools.
+Approval is handled via a callback function on the Conversation struct:
+- `approve: fn(action_type, details) -> :approved | :rejected | :quit_session`
+- When `nil`, destructive operations are rejected by default (safe by default)
+- Terminal injects `Quicksilver.Interfaces.Interactive.request_approval/2` for IO-based approval
+- Write tools call the `approve` function from the execution context
 
 **4. Backend Abstraction**
 
-`lib/backends/backend.ex` defines the behaviour. Currently only `LlamaCpp` is implemented, which:
-- Manages llama.cpp server lifecycle (starts if not running)
-- Uses HTTP API for completions
-- Configured in `config/config.exs`
+`lib/llm_engine/backend.ex` defines the behaviour with pidless callbacks:
+- `complete(messages, options)` — standard completion
+- `complete_with_state(messages, state, options)` — for stateful backends (optional)
+- `health_check(options)` — verify backend readiness
 
-### Supervision Tree
+The `LlmEngine` facade resolves backend atoms to modules:
+- `:llama_cpp` → `Quicksilver.LlmEngine.Backends.LlamaCpp` (local llama.cpp, GenServer)
+- `:openai` → `Quicksilver.LlmEngine.Backends.OpenAI` (OpenAI API, stateless)
+- `:anthropic` → `Quicksilver.LlmEngine.Backends.Anthropic` (Anthropic API, stateless)
+- `:claude_cli` → `Quicksilver.LlmEngine.Backends.ClaudeCli` (Claude CLI headless, stateful)
+
+Unknown atoms are treated as module names directly (useful for testing with mock backends).
+
+## Public API
 
 ```elixir
-Quicksilver.Supervisor
-├── Registry (for agent processes)
-├── Quicksilver.Backends.LlamaCpp (GenServer)
-├── Quicksilver.Tools.Registry (Agent)
-├── Quicksilver.Agents.ToolAgent (GenServer)
-└── Quicksilver.Agents.Manager (GenServer)
+# Create conversations
+ctx = Quicksilver.Conversation.new()                                    # bare chat (llama_cpp)
+ctx = Quicksilver.Conversation.new(backend: :openai)                    # OpenAI
+ctx = Quicksilver.Conversation.new(backend: :claude_cli, tools: :all)   # Claude CLI + tools
+ctx = Quicksilver.Conversation.new(system_prompt: "You are an expert.") # system prompt
+
+# Send messages
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Hello!")
+{:ok, response, ctx} = Quicksilver.Conversation.send(ctx, "Tell me more")
+
+# History
+Quicksilver.Conversation.history(ctx)
+ctx = Quicksilver.Conversation.clear(ctx)
+
+# Terminal chat with options
+Quicksilver.chat(backend: :openai, tools: :none)
+Quicksilver.chat(backend: :claude_cli, system_prompt: "Be concise.")
+
+# Tools
+Quicksilver.list_tools()
+Quicksilver.register_tool(MyTool)
 ```
 
-All supervised processes start on application boot. Tools are registered after supervisor starts successfully.
+## Directory Structure
 
-## Available Tools (As of Current Implementation)
+```
+lib/
+├── quicksilver.ex                              # Top-level facade
+├── application.ex                              # Supervision tree
+│
+├── quicksilver/
+│   ├── conversation.ex                         # Primary abstraction (struct + API + send logic)
+│   ├── tools/                                  # Tool system
+│   │   ├── behaviour.ex
+│   │   ├── registry.ex
+│   │   ├── formatter.ex
+│   │   ├── tools.ex                            # Registration convenience
+│   │   ├── file_reader.ex, search_files.ex, list_files.ex
+│   │   ├── create_file.ex, edit_file.ex
+│   │   ├── run_tests.ex, get_repository_context.ex
+│   │   └── repository_map/                     # PageRank-based code context (powers get_repository_context)
+│   │       ├── repository_map.ex
+│   │       ├── cache/server.ex
+│   │       ├── formatter/llm.ex
+│   │       ├── graph/builder.ex, ranker.ex
+│   │       └── parser/entity.ex, elixir_parser.ex, repository_parser.ex
+│   └── interfaces/
+│       ├── terminal.ex                         # Terminal chat (injects IO-based approval)
+│       └── interactive.ex                      # IO-based approval UI (diff display, prompts)
+│
+└── llm_engine/                                 # LLM backends
+    ├── llm_engine.ex                           # Facade with backend resolution
+    ├── backend.ex                              # Behaviour (pidless callbacks)
+    └── backends/
+        ├── llama_cpp.ex                        # Local llama.cpp (GenServer)
+        ├── openai.ex                           # OpenAI API (stateless)
+        ├── anthropic.ex                        # Anthropic API (stateless)
+        └── claude_cli.ex                       # Claude CLI headless (stateful)
+```
+
+## Conversation Struct
+
+```elixir
+defstruct [
+  history: [],
+  system_prompt: nil,
+  tools: :none,               # :none | :all | [list of tool name strings]
+  backend: :llama_cpp,         # :llama_cpp | :openai | :anthropic | :claude_cli | module
+  backend_state: %{},          # backend-specific state (e.g. claude_cli session_id)
+  workspace_root: nil,
+  max_iterations: 50,
+  per_iteration_timeout: 300_000,
+  approve: nil                 # fn(action_type, details) -> :approved | :rejected | :quit_session
+]
+```
+
+## Available Tools
 
 **Read-only:**
 - `read_file` - Read file contents
 - `search_files` - Search codebase (ripgrep/grep)
 - `list_files` - List files with glob patterns
+- `get_repository_context` - PageRank-based code context
 
 **Write (require approval):**
 - `create_file` - Create new files
@@ -87,170 +202,67 @@ All write tools create `.backup.timestamp` files before modifications.
 
 1. Create module in `lib/quicksilver/tools/`
 2. Implement `@behaviour Quicksilver.Tools.Behaviour`
-3. Add to `lib/quicksilver/tools.ex` alias and `register_default_tools/0`
-4. If destructive: integrate with approval system via context
+3. Add to `lib/quicksilver/tools/tools.ex` `register_default_tools/0`
+4. Write tools: call `approve` function from context for destructive operations
 
-## Agent Execution Context
+## Tool Execution Context
 
 When tools execute, they receive a `context` map with:
 - `:workspace_root` - Base directory for file operations
-- `:approval_policy` - Policy struct for approval checks
-
-The ToolAgent automatically injects the default approval policy into context on each iteration.
-
-## Terminal Interface
-
-`lib/interfaces/terminal.ex` provides the interactive chat:
-- Commands: `help`, `tools`, `agents`, `agent <name>`, `history`, `clear`, `exit`
-- Multi-agent switching with conversation history preservation
-- Routes to ToolAgent's `execute_task/3`
+- `:approve` - Approval callback function
 
 ## Configuration
 
-`config/config.exs` contains llama.cpp server settings:
-- Server binary path
-- Model path and filename
-- Port, threads, context size, GPU layers
+```elixir
+# config/config.exs
 
-Update these paths to match your local setup.
+# Local LlamaCpp
+config :quicksilver, Quicksilver.LlmEngine.Backends.LlamaCpp,
+  server_path: "...",
+  model_path: "...",
+  model_file: "...",
+  port: 8080,
+  threads: 16,
+  ctx_size: 8192,
+  gpu_layers: 99,
+  auto_start: true
 
-## Key Behaviors to Maintain
+# OpenAI
+config :quicksilver, Quicksilver.LlmEngine.Backends.OpenAI,
+  api_key: System.get_env("OPENAI_API_KEY"),
+  model: "gpt-4o"
 
-**Tool Uniqueness Validation**: The `edit_file` tool requires `old_string` to appear exactly once in the file. This prevents ambiguous edits.
+# Anthropic
+config :quicksilver, Quicksilver.LlmEngine.Backends.Anthropic,
+  api_key: System.get_env("ANTHROPIC_API_KEY"),
+  model: "claude-sonnet-4-6"
+```
+
+## Key Behaviours to Maintain
+
+**Conversation is a struct** — no GenServer, no process, no supervision. The caller owns the struct.
+
+**Tool Uniqueness Validation**: The `edit_file` tool requires `old_string` to appear exactly once in the file.
 
 **Backup Creation**: Always create backups before destructive operations (pattern: `path.backup.timestamp`).
 
-**Per-Iteration Timeouts**: When modifying ToolAgent, maintain the pattern of per-iteration timeouts rather than total task timeouts to allow long-running multi-tool tasks.
+**Per-Iteration Timeouts**: When modifying the tool-calling strategy, maintain per-iteration timeouts rather than total task timeouts.
 
-**Tool Result Formatting**: Use `Formatter.format_tool_result/2` to ensure consistent formatting of tool outputs in conversation history.
+**Tool Result Formatting**: Use `Formatter.format_tool_result/2` for consistent formatting.
 
-## Testing Notes
+**Approval is a callback** — tools call `context.approve.(action_type, details)`. They never import IO or Interactive directly.
+
+## Testing
 
 - Unit tests in `test/` directory
-- Integration tests in `test_editing.exs` (tests file creation/editing with auto-approve policy)
 - Run terminal with `mix run start_chat.exs` for manual testing
+- `mix test` runs all tests
+- Mock backends: pass module directly as `backend:` option (e.g., `backend: MyMockBackend`)
 
 ## Common Pitfalls
 
-1. **Don't use total timeouts** - The GenServer call uses `:infinity` (with 10min safety timeout), individual iterations timeout at 5min
+1. **Config returns keyword list** - `Application.get_env(:quicksilver, Module)` returns a keyword list, convert with `Map.new/1` before using with `Map.merge/2`
 2. **Tool registration timing** - Tools must be registered after supervision tree starts
-3. **Context propagation** - When adding recursive calls in ToolAgent, ensure `per_iteration_timeout` is passed through
-4. **Approval policy** - Write tools should check `should_request_approval?/3` and call `Interactive.request_approval/2`
-
-Based on the research, here are the **highest-impact, immediately actionable** insights for your coding agent:
-
-## 1. Start with the "Repository Map" Pattern (70% Success Rate)
-```python
-# Use tree-sitter to parse your codebase into an AST
-# Apply PageRank algorithm to the call graph
-# This gives you a token-efficient representation of the entire codebase
-```
-**Why it matters**: Aider achieved state-of-the-art results with this. It's deterministic, comprehensive, and avoids RAG false positives. This single feature determines whether agents can find the right files to edit.
-
-## 2. Implement the "Documentation-First" Workflow
-Before ANY coding task:
-1. Have the agent read/create: `PROJECT.md`, `ARCHITECTURE.md`, `CONVENTIONS.md`
-2. Start every request with: "First, read all project summary docs..."
-3. **Result**: 9/10 tasks correct on first try (proven in 40,000 line production system)
-
-## 3. Use the Three-Layer Context Strategy
-```
-Layer 1: Just store file paths/URLs (not content)
-Layer 2: Write notes to files (agent's permanent memory)  
-Layer 3: Keep prompt prefixes stable for 10x cost reduction
-```
-**Critical**: Cached tokens cost $0.30 vs $3.00 per million. This makes or breaks economic viability.
-
-## 4. Enforce TDD as Non-Negotiable Default
-```python
-workflow = [
-    "Write failing tests first",
-    "User reviews tests",
-    "Write code to pass tests", 
-    "Iterate until passing",
-    "User reviews implementation"
-]
-```
-**Why**: Agents excel at iteration loops. TDD is "much more powerful with agents than manual TDD" per Anthropic's research.
-
-## 5. Build "Skills" That Compound Over Time
-Create `SKILL.md` files that agents MUST follow when applicable:
-```yaml
----
-name: debug_api_error
-when: API returns 4xx or 5xx
-mandatory: true
----
-1. Check request headers first
-2. Validate authentication
-3. Log full request/response
-4. [specific steps for your system]
-```
-Agents can even create new skills for themselves. This solves the "permanent new hire" problem.
-
-## 6. Keep Errors in Context (Don't Clear Them)
-```python
-# DON'T DO THIS:
-if error:
-    clear_context()
-    retry()
-
-# DO THIS:
-if error:
-    append_to_context(error_trace)
-    retry()  # Agent learns from the error
-```
-**Impact**: 35-49% reduction in repeat mistakes. Errors update the model's priors.
-
-## 7. Use Voice Input for Requirements
-- Explain requirements verbally instead of typing
-- Agent transcribes to structured docs
-- Then implements from its own documentation
-- **Result**: "Far, far faster" - saves multiple days per project
-
-## 8. Implement the "Dual-Session" Architecture
-- **Session 1**: Architect (designs and reviews)
-- **Session 2**: Implementer (builds)
-- Use `/clear` between chunks for fresh perspective
-- **Why**: Prevents implementation bias in code review
-
-## 9. Tool Descriptions Are Make-or-Break
-```python
-# BAD:
-def calc(a, b): return a+b
-
-# GOOD:
-def add_numbers(a: float, b: float) -> float:
-    """Add two numbers. Use ANYTIME you need addition.
-    
-    Args:
-        a: First number to add
-        b: Second number to add
-    Returns:
-        Sum of the two numbers
-    """
-```
-Well-described tools have 2-3x higher correct usage rate.
-
-## 10. The Review Reality Check
-**Accept this truth**: Even with perfect setup, agents make structural mistakes ~10% of the time. You MUST review thoroughly. Treat output like it's from a productive but inexperienced junior developer.
-
-## Quick Start Implementation Order
-
-**Week 1**: Repository map + basic file operations + TDD workflow
-
-**Week 2**: Documentation-first pattern + persistent memory files
-
-**Week 3**: Skills system + error preservation in context
-
-**Week 4**: Cache optimization + dual-session architecture
-
-## The Single Most Important Pattern
-
-If you implement nothing else, do this:
-
-```
-Research → Plan → User Reviews Plan → Execute → Verify → Commit
-```
-
-Never let the agent jump straight from request to code. This one pattern prevents 80% of problems.
+3. **Conversation is a struct** — no GenServer state; the caller (terminal, test harness, higher-level agent) manages the `%Conversation{}` struct
+4. **Approval is injected** - Write tools call `context.approve` callback, not Interactive directly. Terminal injects the IO-based callback; tests/programmatic use pass `nil` (auto-approve)
+5. **Backend resolution** — atom keys (`:openai`, `:anthropic`) are resolved by `LlmEngine.resolve_backend/1`. Unknown atoms are treated as module names directly.
