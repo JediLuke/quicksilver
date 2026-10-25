@@ -133,18 +133,19 @@ defmodule Quicksilver.Agents.ToolAgent do
       # Get available tools
       tools = Registry.list_tools()
 
-      # Build prompt
-      prompt = build_prompt(tools, history)
-
-      # Call LLM (convert string prompt to message format)
-      messages = [%{role: "user", content: prompt}]
+      # Build request: structured messages + tools for native tool-calling
+      # backends, a single flattened prompt for the JSON-in-text protocol
+      {messages, options} = build_request(tools, history, state, per_iteration_timeout)
 
       # Spawn a task with timeout for this single iteration
       task = Task.async(fn ->
-        state.backend_module.complete(state.backend_pid, messages, [])
+        state.backend_module.complete(state.backend_pid, messages, options)
       end)
 
       case Task.yield(task, per_iteration_timeout) || Task.shutdown(task) do
+        {:ok, {:ok, {:tool_calls, calls, assistant_message}}} ->
+          handle_native_tool_calls(calls, assistant_message, history, context, iterations_left, state, per_iteration_timeout, iteration)
+
         {:ok, {:ok, response}} ->
           Logger.debug("LLM response: #{String.slice(response, 0..200)}...")
 
@@ -165,8 +166,8 @@ defmodule Quicksilver.Agents.ToolAgent do
           end
 
         {:ok, {:error, reason}} ->
-          Logger.error("Backend error: #{reason}")
-          {{:error, "Backend error: #{reason}"}, history}
+          Logger.error("Backend error: #{inspect(reason)}")
+          {{:error, "Backend error: #{inspect(reason)}"}, history}
 
         nil ->
           Logger.error("LLM call timed out after #{per_iteration_timeout}ms")
@@ -204,6 +205,47 @@ defmodule Quicksilver.Agents.ToolAgent do
         # Continue loop - LLM might try different approach
         execute_with_tools(history, context, iterations_left - 1, state, per_iteration_timeout, iteration + 1)
     end
+  end
+
+  # Native tool calls: echo the assistant message, then one "tool" message per
+  # call (matched by tool_call_id). Failures stay in context so the LLM can adapt.
+  defp handle_native_tool_calls(calls, assistant_message, history, context, iterations_left, state, per_iteration_timeout, iteration) do
+    history = history ++ [assistant_message]
+
+    history =
+      Enum.reduce(calls, history, fn call, acc ->
+        Logger.info("Tool call: #{call.name} with args: #{inspect(call.arguments)}")
+
+        result =
+          case call.arguments do
+            {:ok, args} -> Registry.execute_tool(call.name, args, context)
+            {:error, reason} -> {:error, reason}
+          end
+
+        case result do
+          {:ok, output} -> Logger.debug("Tool succeeded: #{String.slice(output, 0..200)}...")
+          {:error, reason} -> Logger.warning("Tool failed: #{inspect(reason)}")
+        end
+
+        content = Formatter.format_tool_result(call.name, result)
+        acc ++ [%{role: "tool", tool_call_id: call.id, content: content}]
+      end)
+
+    execute_with_tools(history, context, iterations_left - 1, state, per_iteration_timeout, iteration + 1)
+  end
+
+  defp build_request(tools, history, state, per_iteration_timeout) do
+    if native_tools?(state.backend_module) do
+      messages = [%{role: "system", content: Formatter.native_system_prompt()} | history]
+      {messages, [tools: tools, timeout: per_iteration_timeout]}
+    else
+      prompt = build_prompt(tools, history)
+      {[%{role: "user", content: prompt}], [timeout: per_iteration_timeout]}
+    end
+  end
+
+  defp native_tools?(backend_module) do
+    function_exported?(backend_module, :native_tools?, 0) and backend_module.native_tools?()
   end
 
   defp build_prompt(tools, history) do

@@ -61,7 +61,7 @@ defmodule Quicksilver.Agents.SampleAgent do
     ]
 
     # Call the LLM backend
-    case Quicksilver.Backends.LlamaCpp.complete(LlamaCpp, messages) do
+    case Quicksilver.Backends.complete(messages) do
       {:ok, response} ->
         # Clean up the response
         answer = String.trim(response)
@@ -126,7 +126,7 @@ defmodule Quicksilver.Agents.SampleAgent do
     ]
 
     # Answer immediately
-    case Quicksilver.Backends.LlamaCpp.complete(LlamaCpp, messages) do
+    case Quicksilver.Backends.complete(messages) do
       {:ok, response} ->
         answer = String.trim(response)
         Logger.info("🧠 Agent '#{state.name}' responds: #{answer}")

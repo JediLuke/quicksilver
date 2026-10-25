@@ -8,6 +8,8 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
   defstruct [:config, :server_port, :base_url, :ready, :owned_server]
 
+  @default_request_timeout 300_000
+
   def child_spec(_opts) do
     %{
       id: __MODULE__,
@@ -24,7 +26,24 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
   @impl Quicksilver.Backends.Backend
   def complete(pid, messages, options \\ []) do
-    GenServer.call(pid, {:complete, messages, options}, 30_000)
+    # Large/reasoning models can take minutes per call; callers (e.g. ToolAgent)
+    # enforce their own per-iteration timeout on top of this.
+    timeout = Keyword.get(options, :timeout, @default_request_timeout)
+    GenServer.call(pid, {:complete, messages, options}, timeout + 5_000)
+  end
+
+  @doc """
+  True when the backend is configured with `api: :chat`, i.e. it talks to
+  `/v1/chat/completions` (via `Quicksilver.Backends.OpenAICompatible`) and
+  supports native (structured) tool calls.
+
+  The legacy `api: :completion` mode uses the raw `/completion` endpoint with
+  the JSON-in-text tool protocol from `Quicksilver.Tools.Formatter`.
+  """
+  @impl Quicksilver.Backends.Backend
+  def native_tools? do
+    config = Application.get_env(:quicksilver, :llama_cpp, %{})
+    Map.get(config, :api, :completion) == :chat
   end
 
   @impl Quicksilver.Backends.Backend
@@ -89,6 +108,9 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
     model_path = config.model_path <> "/" <> config.model_file
 
+    if config[:launch_script] do
+      start_standalone_script(config)
+    else
     unless File.exists?(config.server_path) do
       error_msg = "❌ llama.cpp server not found at #{config.server_path}"
       Logger.error(error_msg)
@@ -197,6 +219,47 @@ defmodule Quicksilver.Backends.LlamaCpp do
         end
       end
     end
+    end
+  end
+
+  # Launch via a user-provided script that carries the model-specific flags
+  # (e.g. --jinja, --n-cpu-moe for MoE offload) our generic args don't cover.
+  defp start_standalone_script(config) do
+    script = config.launch_script
+    log = "/tmp/llama-server-#{config.port}.log"
+
+    cond do
+      not File.exists?(script) ->
+        error_msg = "❌ Launch script not found at #{script}"
+        Logger.error(error_msg)
+        {:error, error_msg}
+
+      check_port_open(config.port) ->
+        Logger.warning("⚠️  Port #{config.port} is already in use. Connecting to existing server...")
+        {:ok, :already_running}
+
+      true ->
+        Logger.info("""
+        🚀 Starting standalone llama.cpp server via #{script}
+
+        This server runs independently - Quicksilver will connect without managing it.
+        Logs: #{log}
+        To stop: Quicksilver.Backends.LlamaCpp.stop_standalone()
+        """)
+
+        spawn(fn -> System.cmd("sh", ["-c", "exec \"#{script}\" > #{log} 2>&1"]) end)
+
+        # Large models can take a minute or more to load
+        case wait_for_health("http://localhost:#{config.port}", 0, 90) do
+          :ok ->
+            initialize()
+            :ok
+
+          {:error, reason} ->
+            Logger.error("❌ Server did not become healthy. Check: tail -100 #{log}")
+            {:error, reason}
+        end
+    end
   end
 
   @doc """
@@ -302,8 +365,14 @@ defmodule Quicksilver.Backends.LlamaCpp do
       {:ok, new_state} ->
         {:noreply, %{new_state | ready: true}}
       {:error, reason} ->
-        Logger.error("Failed to initialize LlamaCpp: #{inspect(reason)}")
-        {:stop, {:initialization_failed, reason}, state}
+        # Stay up but not ready: the server may be managed externally and
+        # started later. complete/3 connects lazily once it is reachable.
+        Logger.error("""
+        Failed to initialize LlamaCpp: #{inspect(reason)}
+        No server on port #{state.config.port} and none could be started.
+        Start your llama.cpp server and Quicksilver will connect on the next request.
+        """)
+        {:noreply, state}
     end
   end
 
@@ -391,29 +460,63 @@ defmodule Quicksilver.Backends.LlamaCpp do
 
   @impl GenServer
   def handle_call({:complete, messages, options}, _from, state) do
-    if not state.ready do
-      {:reply, {:error, :not_ready}, state}
+    state = connect_if_available(state)
+
+    cond do
+      not state.ready ->
+        {:reply, {:error, :not_ready}, state}
+
+      Map.get(state.config, :api, :completion) == :chat ->
+        {:reply, chat_complete(state, messages, options), state}
+
+      true ->
+        {:reply, legacy_complete(state, messages, options), state}
+    end
+  end
+
+  # Pick up an externally managed server that came up after we booted
+  defp connect_if_available(%{ready: true} = state), do: state
+
+  defp connect_if_available(state) do
+    with true <- check_port_open(state.config.port),
+         {:ok, %{status: 200}} <- Req.get("#{state.base_url}/health", retry: false) do
+      Logger.info("✅ Connected to llama.cpp server on port #{state.config.port}")
+      %{state | ready: true, owned_server: false}
     else
-      # Convert messages to a prompt string
-      prompt = messages_to_prompt(messages)
+      _ -> state
+    end
+  end
 
-      payload = %{
-        prompt: prompt,
-        temperature: Keyword.get(options, :temperature, 0.7),
-        top_p: Keyword.get(options, :top_p, 0.8),
-        top_k: Keyword.get(options, :top_k, 40),
-        repeat_penalty: Keyword.get(options, :repeat_penalty, 1.05),
-        n_predict: Keyword.get(options, :n_predict, 512)
-      }
+  defp chat_complete(state, messages, options) do
+    # gpt-oss expects its reasoning echoed back between tool calls, and
+    # llama.cpp accepts the extra field
+    config =
+      state.config
+      |> Map.put(:base_url, state.base_url <> "/v1")
+      |> Map.put_new(:send_reasoning, true)
 
-      case Req.post("#{state.base_url}/completion", json: payload, receive_timeout: 60_000) do
-        {:ok, %{status: 200, body: %{"content" => content}}} ->
-          {:reply, {:ok, content}, state}
-        {:ok, response} ->
-          {:reply, {:error, {:unexpected_response, response}}, state}
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
+    Quicksilver.Backends.OpenAICompatible.chat(config, messages, options)
+  end
+
+  defp legacy_complete(state, messages, options) do
+    # Convert messages to a prompt string
+    prompt = messages_to_prompt(messages)
+
+    payload = %{
+      prompt: prompt,
+      temperature: Keyword.get(options, :temperature, 0.7),
+      top_p: Keyword.get(options, :top_p, 0.8),
+      top_k: Keyword.get(options, :top_k, 40),
+      repeat_penalty: Keyword.get(options, :repeat_penalty, 1.05),
+      n_predict: Keyword.get(options, :n_predict, 512)
+    }
+
+    timeout = Keyword.get(options, :timeout, @default_request_timeout)
+
+    case Req.post("#{state.base_url}/completion", json: payload, receive_timeout: timeout) do
+      {:ok, %{status: 200, body: %{"content" => content}}} -> {:ok, content}
+      {:ok, response} -> {:error, {:unexpected_response, response}}
+      {:error, reason} -> {:error, reason}
     end
   end
 

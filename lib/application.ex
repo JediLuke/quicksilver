@@ -3,14 +3,17 @@ defmodule Quicksilver.Application do
 
   @impl true
   def start(_type, _args) do
+    # Selected by the :backend config key (see config/config.exs)
+    {backend_module, backend_server} = Quicksilver.Backends.configured()
+
     children = [
       {Registry, keys: :unique, name: Quicksilver.AgentRegistry},
-      Quicksilver.Backends.LlamaCpp,
+      backend_module,
       Quicksilver.Tools.Registry,
       Quicksilver.RepositoryMap.Cache.Server,
       {Quicksilver.Agents.ToolAgent,
-       backend_module: Quicksilver.Backends.LlamaCpp,
-       backend_pid: LlamaCpp,
+       backend_module: backend_module,
+       backend_pid: backend_server,
        name: Quicksilver.Agents.ToolAgent},
       Quicksilver.Agents.Manager
     ]

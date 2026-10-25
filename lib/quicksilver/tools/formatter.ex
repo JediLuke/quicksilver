@@ -52,6 +52,43 @@ defmodule Quicksilver.Tools.Formatter do
   end
 
   @doc """
+  System prompt for backends with native (structured) tool calling.
+
+  Tool schemas travel in the request's `tools` field, so the prompt only
+  describes the agent's role.
+  """
+  @spec native_system_prompt() :: String.t()
+  def native_system_prompt do
+    """
+    You are a coding agent working in the user's project workspace. Use the provided tools to inspect and modify files and to run tests.
+
+    Guidelines:
+    - Read the relevant files before editing them; never guess at file contents
+    - Call tools when needed to complete the task; otherwise answer normally with text
+    - If a tool fails, read the error and try a different approach
+    - When the task is complete, reply with a concise summary of what you did or found
+    """
+  end
+
+  @doc """
+  Convert tool info maps (from Registry.list_tools/0) to the OpenAI `tools`
+  format used by `/v1/chat/completions`.
+  """
+  @spec to_openai_tools([map()]) :: [map()]
+  def to_openai_tools(tools) do
+    Enum.map(tools, fn tool ->
+      %{
+        type: "function",
+        function: %{
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters_schema
+        }
+      }
+    end)
+  end
+
+  @doc """
   Parse an LLM response to detect tool calls.
 
   Returns:

@@ -272,10 +272,7 @@ defmodule Quicksilver.Interfaces.Terminal do
     else
       # Fallback for agents without execute_task - use direct LLM
       # This is for backward compatibility or simpler agents
-      Quicksilver.Backends.LlamaCpp.complete(
-        LlamaCpp,
-        [%{role: "user", content: text}]
-      )
+      Quicksilver.Backends.complete([%{role: "user", content: text}])
     end
   end
 

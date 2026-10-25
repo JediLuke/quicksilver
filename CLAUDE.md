@@ -35,7 +35,7 @@ Tools are defined via the `Quicksilver.Tools.Behaviour`:
 - `parameters_schema/0` - JSON schema for arguments
 - `execute/2` - Implementation (args, context)
 
-The Registry (`lib/quicksilver/tools/registry.ex`) is an Agent that stores tool modules and handles execution.
+The Registry (`lib/quicksilver/tools/registry.ex`) is a GenServer that stores tool modules. `execute_tool/3` looks the tool up there but runs it in the caller's process, because tools can block for a long time (approval prompts, `run_tests`). Never move tool execution back inside a `GenServer.call`.
 
 The Formatter (`lib/quicksilver/tools/formatter.ex`) converts tools to LLM prompts and parses tool calls from various JSON formats.
 
@@ -49,18 +49,18 @@ Context includes `:approval_policy` which is checked before executing write tool
 
 **4. Backend Abstraction**
 
-`lib/backends/backend.ex` defines the behaviour. Currently only `LlamaCpp` is implemented, which:
-- Manages llama.cpp server lifecycle (starts if not running)
-- Uses HTTP API for completions
-- Configured in `config/config.exs`
+`lib/backends/backend.ex` defines the behaviour (`complete/3`, `health_check/1`, optional `native_tools?/0`). The `:backend` config key (or `QUICKSILVER_BACKEND` env var) picks one; `Quicksilver.Backends.configured/0` resolves it to `{module, server}` and `Quicksilver.Backends.complete/2` calls it. Don't hardcode a backend module elsewhere.
+
+- `OpenAICompatible` - any `/chat/completions` server with tool calling (OpenRouter, OpenAI, Mistral, vLLM, Ollama, llama.cpp). Holds config only; requests run in the caller's process. API keys come from the env var named by `api_key_env`, never from config.
+- `LlamaCpp` - manages the llama.cpp server lifecycle (launch script, standalone/owned server). `api: :chat` delegates to `OpenAICompatible.chat/3` (with `send_reasoning: true` for gpt-oss); `api: :completion` uses the raw `/completion` endpoint with the JSON-in-text tool protocol.
 
 ### Supervision Tree
 
 ```elixir
 Quicksilver.Supervisor
 ├── Registry (for agent processes)
-├── Quicksilver.Backends.LlamaCpp (GenServer)
-├── Quicksilver.Tools.Registry (Agent)
+├── Configured backend: LlamaCpp or OpenAICompatible (GenServer)
+├── Quicksilver.Tools.Registry (GenServer)
 ├── Quicksilver.Agents.ToolAgent (GenServer)
 └── Quicksilver.Agents.Manager (GenServer)
 ```
