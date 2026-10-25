@@ -38,16 +38,15 @@ defmodule Quicksilver.Tools.RunTests do
                     cd: workspace_root,
                     stderr_to_stdout: true) do
       {output, 0} ->
-        {:ok, "✅ Tests passed!\n\n#{output}"}
+        {:ok, "Tests passed!\n\n#{output}"}
 
       {output, _exit_code} ->
         parsed = parse_test_failures(output)
-        {:ok, "❌ Tests failed:\n\n#{output}\n\n#{parsed}"}
+        {:ok, "Tests failed:\n\n#{output}\n\n#{parsed}"}
     end
   end
 
   defp parse_test_failures(output) do
-    # Extract useful failure information
     failures =
       output
       |> String.split("\n")

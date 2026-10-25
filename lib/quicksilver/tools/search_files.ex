@@ -81,19 +81,16 @@ defmodule Quicksilver.Tools.SearchFiles do
   end
 
   defp perform_search(pattern, search_dir, file_pattern) do
-    # Try ripgrep first (fastest)
     case search_with_ripgrep(pattern, search_dir, file_pattern) do
       {:ok, _} = result ->
         result
 
       {:error, _} ->
-        # Fall back to grep/find
         case search_with_grep(pattern, search_dir, file_pattern) do
           {:ok, _} = result ->
             result
 
           {:error, _} ->
-            # Fall back to pure Elixir
             search_with_elixir(pattern, search_dir, file_pattern)
         end
     end
@@ -116,7 +113,6 @@ defmodule Quicksilver.Tools.SearchFiles do
         {:ok, parse_ripgrep_output(output)}
 
       {_output, 1} ->
-        # No matches found
         {:ok, []}
 
       {_output, _} ->

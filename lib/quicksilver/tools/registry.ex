@@ -45,11 +45,19 @@ defmodule Quicksilver.Tools.Registry do
   @doc """
   Execute a tool by name with the given arguments and context.
 
+  The tool runs in the caller's process, not the registry's: tools can block
+  for a long time (approval prompts wait on the user, `run_tests` runs the
+  whole suite), which must neither hit a GenServer.call timeout nor stall the
+  registry for other agents.
+
   Returns {:ok, result} on success or {:error, reason} on failure.
   """
   @spec execute_tool(String.t(), map(), map()) :: {:ok, String.t()} | {:error, String.t()}
   def execute_tool(tool_name, args, context \\ %{}) do
-    GenServer.call(__MODULE__, {:execute, tool_name, args, context}, 30_000)
+    case get_tool(tool_name) do
+      {:ok, tool_info} -> run_tool(tool_info, args, context)
+      {:error, :not_found} -> {:error, "Tool '#{tool_name}' not found"}
+    end
   end
 
   @doc """
@@ -69,7 +77,6 @@ defmodule Quicksilver.Tools.Registry do
 
   @impl true
   def handle_call({:register, tool_module}, _from, state) do
-    # Verify the module implements the behaviour
     if implements_behaviour?(tool_module) do
       tool_name = tool_module.name()
 
@@ -81,7 +88,7 @@ defmodule Quicksilver.Tools.Registry do
       }
 
       new_state = put_in(state, [:tools, tool_name], tool_info)
-      Logger.info("Registered tool: #{tool_name}")
+      Logger.debug("Registered tool: #{tool_name}")
       {:reply, {:ok, tool_name}, new_state}
     else
       {:reply, {:error, "Module does not implement Quicksilver.Tools.Behaviour"}, state}
@@ -114,33 +121,25 @@ defmodule Quicksilver.Tools.Registry do
     end
   end
 
-  @impl true
-  def handle_call({:execute, tool_name, args, context}, _from, state) do
-    case Map.get(state.tools, tool_name) do
-      nil ->
-        {:reply, {:error, "Tool '#{tool_name}' not found"}, state}
-
-      tool_info ->
-        Logger.debug("Executing tool: #{tool_name} with args: #{inspect(args)}")
-
-        result =
-          try do
-            tool_info.module.execute(args, context)
-          rescue
-            e ->
-              Logger.error("Tool execution error: #{inspect(e)}")
-              {:error, "Tool execution failed: #{Exception.message(e)}"}
-          end
-
-        Logger.debug("Tool result: #{inspect(result)}")
-        {:reply, result, state}
-    end
-  end
-
   ## Private Functions
 
+  defp run_tool(tool_info, args, context) do
+    Logger.debug("Executing tool: #{tool_info.name} with args: #{inspect(args)}")
+
+    result =
+      try do
+        tool_info.module.execute(args, context)
+      rescue
+        e ->
+          Logger.error("Tool execution error: #{inspect(e)}")
+          {:error, "Tool execution failed: #{Exception.message(e)}"}
+      end
+
+    Logger.debug("Tool result: #{inspect(result)}")
+    result
+  end
+
   defp implements_behaviour?(module) do
-    # Check if module exports the required callbacks
     behaviours = module.module_info(:attributes)[:behaviour] || []
     Quicksilver.Tools.Behaviour in behaviours
   rescue

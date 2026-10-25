@@ -24,3 +24,6 @@ quicksilver-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Secret config (API keys)
+config/*.secret.exs

@@ -25,6 +25,7 @@ defmodule Quicksilver.MixProject do
       {:libgraph, "~> 0.16"},           # Graph operations for call graph
       {:file_system, "~> 1.0"},         # File watching for cache invalidation
       {:flow, "~> 1.2"},                # Parallel processing for parsing
+      {:breeze, "~> 0.5.2"},            # LiveView-inspired TUI rendering
       # {:typed_struct, "~> 0.3"},
       # {:uuid, "~> 1.1"},
       # {:rambo, "~> 0.3"}  # For future Claude Code integration
