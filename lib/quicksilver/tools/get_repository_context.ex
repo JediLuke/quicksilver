@@ -5,7 +5,7 @@ defmodule Quicksilver.Tools.GetRepositoryContext do
   """
   @behaviour Quicksilver.Tools.Behaviour
 
-  alias Quicksilver.RepositoryMap.AgentIntegration
+  alias Quicksilver.Tools.RepositoryMap
 
   @impl true
   def name, do: "get_repository_context"
@@ -60,16 +60,14 @@ defmodule Quicksilver.Tools.GetRepositoryContext do
     if is_nil(task_description) or String.trim(task_description) == "" do
       {:error, "task_description is required"}
     else
-      case AgentIntegration.get_or_generate(repo_path) do
+      case RepositoryMap.get_or_generate(repo_path) do
         {:ok, _map_data} ->
-          # Start an agent integration process
-          {:ok, agent_pid} = AgentIntegration.start_link(repo_path)
+          {:ok, agent_pid} = RepositoryMap.start_link(repo_path)
 
-          case AgentIntegration.get_context(agent_pid, task_description,
+          case RepositoryMap.get_context(agent_pid, task_description,
                  token_limit: token_limit
                ) do
             {:ok, context_text} ->
-              # Stop the agent process
               GenServer.stop(agent_pid)
 
               {:ok,

@@ -45,4 +45,28 @@ defmodule Quicksilver.Tools.Behaviour do
   """
   @callback execute(args :: map(), context :: map()) ::
               {:ok, String.t()} | {:error, String.t()}
+
+  @doc """
+  Request approval for a destructive operation.
+
+  Calls the `approve` callback from the tool execution context. If no callback
+  is set, defaults to `:rejected` — destructive operations require explicit
+  opt-in from the caller (terminal injects an interactive callback, tests can
+  pass an auto-approve function).
+
+  ## Parameters
+    - context: The tool execution context map
+    - action_type: Atom describing the action (e.g. `:file_edit`, `:file_create`)
+    - details: Map of action-specific details shown to the user
+
+  ## Returns
+    - `:approved`, `:rejected`, or `:quit_session`
+  """
+  @spec request_approval(map(), atom(), map()) :: :approved | :rejected | :quit_session
+  def request_approval(context, action_type, details) do
+    case Map.get(context, :approve) do
+      nil -> :rejected
+      approve_fn when is_function(approve_fn, 2) -> approve_fn.(action_type, details)
+    end
+  end
 end

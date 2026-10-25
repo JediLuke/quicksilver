@@ -88,11 +88,9 @@ defmodule Quicksilver.Tools.EditFile do
   end
 
   defp generate_diff(original, edited, filename) do
-    # Simple unified diff
     original_lines = String.split(original, "\n")
     edited_lines = String.split(edited, "\n")
 
-    # Find changed sections
     diff_lines =
       Enum.zip(original_lines, edited_lines)
       |> Enum.with_index(1)
@@ -114,13 +112,7 @@ defmodule Quicksilver.Tools.EditFile do
   end
 
   defp request_approval_if_needed(path, diff, context) do
-    policy = Map.get(context, :approval_policy, Quicksilver.Approval.Policy.default())
-
-    if Quicksilver.Approval.Policy.should_request_approval?(policy, "edit_file", %{path: path}) do
-      Quicksilver.Approval.Interactive.request_approval(:file_edit, %{path: path, diff: diff})
-    else
-      :approved
-    end
+    Quicksilver.Tools.Behaviour.request_approval(context, :file_edit, %{path: path, diff: diff})
   end
 
   defp create_backup(path) do

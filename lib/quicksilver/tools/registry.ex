@@ -77,7 +77,6 @@ defmodule Quicksilver.Tools.Registry do
 
   @impl true
   def handle_call({:register, tool_module}, _from, state) do
-    # Verify the module implements the behaviour
     if implements_behaviour?(tool_module) do
       tool_name = tool_module.name()
 
@@ -89,7 +88,7 @@ defmodule Quicksilver.Tools.Registry do
       }
 
       new_state = put_in(state, [:tools, tool_name], tool_info)
-      Logger.info("Registered tool: #{tool_name}")
+      Logger.debug("Registered tool: #{tool_name}")
       {:reply, {:ok, tool_name}, new_state}
     else
       {:reply, {:error, "Module does not implement Quicksilver.Tools.Behaviour"}, state}
@@ -141,7 +140,6 @@ defmodule Quicksilver.Tools.Registry do
   end
 
   defp implements_behaviour?(module) do
-    # Check if module exports the required callbacks
     behaviours = module.module_info(:attributes)[:behaviour] || []
     Quicksilver.Tools.Behaviour in behaviours
   rescue

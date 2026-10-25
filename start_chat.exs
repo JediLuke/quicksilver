@@ -1,6 +1,7 @@
 #!/usr/bin/env elixir
 
-# Convenience script to start the terminal chat interface
+# Convenience script to start the terminal chat with the coding tools
 # Run with: mix run start_chat.exs
+# Other backend: QUICKSILVER_BACKEND=claude_cli mix run start_chat.exs
 
-Quicksilver.Interfaces.Terminal.start()
+Quicksilver.ContextLib.ElixirCodingAssistant.start()

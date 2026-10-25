@@ -11,8 +11,9 @@ defmodule Quicksilver.Tools.ListFiles do
   @impl true
   def description do
     """
-    List files in a directory matching an optional pattern.
-    Useful for exploring the codebase structure.
+    List files and directories. Without a pattern, lists top-level entries
+    in the given directory (including subdirectory names ending with /).
+    With a glob pattern like '**/*.ex', recursively finds matching files.
     """
   end
 
@@ -27,7 +28,7 @@ defmodule Quicksilver.Tools.ListFiles do
         },
         "pattern" => %{
           "type" => "string",
-          "description" => "Glob pattern like '*.ex' or '**/*.exs'"
+          "description" => "Glob pattern like '*.ex' or '**/*.exs'. If omitted, lists top-level entries."
         }
       }
     }
@@ -37,9 +38,44 @@ defmodule Quicksilver.Tools.ListFiles do
   def execute(args, context) do
     workspace_root = Map.get(context, :workspace_root, File.cwd!())
     directory = Map.get(args, "directory", ".")
-    pattern = Map.get(args, "pattern", "**/*")
+    pattern = Map.get(args, "pattern")
 
     search_dir = resolve_path(directory, workspace_root)
+
+    if pattern do
+      list_with_pattern(search_dir, pattern, workspace_root)
+    else
+      list_top_level(search_dir, workspace_root)
+    end
+  end
+
+  defp list_top_level(search_dir, workspace_root) do
+    case File.ls(search_dir) do
+      {:ok, entries} ->
+        entries =
+          entries
+          |> Enum.sort()
+          |> Enum.map(fn entry ->
+            full_path = Path.join(search_dir, entry)
+            if File.dir?(full_path), do: entry <> "/", else: entry
+          end)
+
+        result =
+          if length(entries) > 100 do
+            "Found #{length(entries)} entries (showing first 100):\n" <>
+              (Enum.take(entries, 100) |> Enum.join("\n"))
+          else
+            "Found #{length(entries)} entries:\n" <> Enum.join(entries, "\n")
+          end
+
+        {:ok, result}
+
+      {:error, reason} ->
+        {:error, "Cannot list directory #{Path.relative_to(search_dir, workspace_root)}: #{reason}"}
+    end
+  end
+
+  defp list_with_pattern(search_dir, pattern, workspace_root) do
     glob_pattern = Path.join(search_dir, pattern)
 
     files =
@@ -51,7 +87,7 @@ defmodule Quicksilver.Tools.ListFiles do
     result =
       if length(files) > 50 do
         "Found #{length(files)} files (showing first 50):\n" <>
-        (Enum.take(files, 50) |> Enum.join("\n"))
+          (Enum.take(files, 50) |> Enum.join("\n"))
       else
         "Found #{length(files)} files:\n" <> Enum.join(files, "\n")
       end
